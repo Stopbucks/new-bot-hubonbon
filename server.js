@@ -33,7 +33,9 @@ bot.on('text', async (ctx) => {
 
     try {
         // 呼叫 Gemini 大腦
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash"});
+        // 修改重點：加上 -001 版本號，這是目前最穩定的 Flash 版本
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-001"});
+        
         const result = await model.generateContent(userMessage);
         const response = await result.response;
         const text = response.text();
