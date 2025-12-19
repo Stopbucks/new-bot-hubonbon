@@ -6,21 +6,24 @@ const express = require('express');
 
 // 設定變數
 const bot = new Telegraf(process.env.TELEGRAM_TOKEN);
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+// ★★★ 暴力測試區：直接把鑰匙寫死在程式碼裡 ★★★
+// (請注意：這只是為了測試，確認鑰匙本身沒問題。測試完後我們會改回來)
+const genAI = new GoogleGenerativeAI("AIzaSyA7GE6ez07HoEKKzJ6fava1v8piekzlh50");
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 防止休眠的網站入口
-// ★ 修改點：加上 121902 標記，確認是今日第 2 版
-app.get('/', (req, res) => res.send('機器人運作中 (Ver 121902)'));
+// 標記版本為 121903 (Hardcode Test)
+app.get('/', (req, res) => res.send('機器人運作中 (Ver 121903 - Hardcode Test)'));
 
 // 機器人邏輯
 bot.on('text', async (ctx) => {
-    console.log(`[121902] 收到訊息: ${ctx.message.text}`); // Log 加上版本號
+    console.log(`[121903] 收到訊息: ${ctx.message.text}`);
     await ctx.sendChatAction('typing');
 
     try {
-        // ★ 關鍵設定：使用最穩定的 gemini-pro，避免新模型找不到的問題
+        // 使用標準版 gemini-pro
         const model = genAI.getGenerativeModel({ model: "gemini-pro" });
         
         const result = await model.generateContent(ctx.message.text);
@@ -28,18 +31,18 @@ bot.on('text', async (ctx) => {
         const text = response.text();
         
         await ctx.reply(text);
-        console.log('[121902] 回復成功！');
+        console.log('[121903] 回復成功！');
     } catch (error) {
-        console.error('[121902] 發生錯誤:', error);
-        await ctx.reply(`抱歉，發生錯誤 (Ver 121902)。錯誤訊息：${error.message}`);
+        console.error('[121903] 發生錯誤:', error);
+        await ctx.reply(`抱歉，發生錯誤 (Ver 121903)。錯誤訊息：${error.message}`);
     }
 });
 
 // 啟動伺服器
-app.listen(PORT, () => console.log(`Server running on port ${PORT} (Ver 121902)`));
+app.listen(PORT, () => console.log(`Server running on port ${PORT} (Ver 121903)`));
 
 // 啟動機器人
-bot.launch().then(() => console.log('Telegram Bot 已重啟成功 (Ver 121902)！'));
+bot.launch().then(() => console.log('Telegram Bot 已重啟成功 (Ver 121903)！'));
 
 // 優雅關閉
 process.once('SIGINT', () => bot.stop('SIGINT'));
