@@ -1,5 +1,5 @@
 // ==========================================
-// Info Commander (Ver Production-1.0)
+// Info Commander (Ver 1222 - Final Stable)
 // ==========================================
 
 require('dotenv').config();
@@ -16,7 +16,7 @@ const https = require('https');
 // --- 環境變數檢查 ---
 const token = process.env.TELEGRAM_TOKEN;
 const geminiKey = process.env.GEMINI_API_KEY;
-const port = process.env.PORT || 3000;
+const port = process.env.PORT || 10000; // Render 預設 Port 為 10000
 
 if (!token || !geminiKey) {
     console.error("❌ 錯誤：請確認 .env 或 Render 環境變數中包含 TELEGRAM_TOKEN 與 GEMINI_API_KEY");
@@ -27,6 +27,8 @@ if (!token || !geminiKey) {
 const bot = new TelegramBot(token, { polling: true });
 const genAI = new GoogleGenerativeAI(geminiKey);
 const app = express();
+
+console.log("🚀 System Starting... (Ver 1222)");
 
 // --- 核心：System Prompt (社群編輯大腦) ---
 const SYSTEM_PROMPT = `
@@ -92,10 +94,10 @@ async function getWebContent(url) {
     }
 }
 
-// 3. Gemini 生成邏輯
+// 3. Gemini 生成邏輯 (Ver 1222 Fix: 使用標準名稱)
 async function callGemini(userContent, isRevision = false, revisionInstruction = "") {
-    // 這裡建議使用穩定版模型，若要嘗鮮可改為 "gemini-3-flash-preview"
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-001" });
+    // ✅ 關鍵修正：使用最通用的標準模型名稱，避免 404
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
     let finalPrompt = "";
     if (isRevision) {
@@ -127,7 +129,6 @@ async function callGemini(userContent, isRevision = false, revisionInstruction =
 
 // --- 機器人事件監聽 ---
 
-// 監聽所有文字訊息
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
@@ -143,24 +144,24 @@ bot.on('message', async (msg) => {
         let isRevision = false;
         let revisionInstruction = "";
 
-        // === 判斷是否為「回覆修改」(Revision) ===
+        // === A. 判斷是否為「回覆修改」(Revision) ===
         if (msg.reply_to_message && msg.reply_to_message.from.id === bot.id) {
             console.log(`[Revision] 用戶要求修改文章`);
             inputData = msg.reply_to_message.text; // 舊的文章內容
             isRevision = true;
             revisionInstruction = text; // 用戶的新指令
         } 
-        // === 處理 URL (YouTube 或 網頁) ===
+        // === B. 處理 URL (YouTube 或 網頁) ===
         else if (text && (text.startsWith('http') || text.startsWith('www'))) {
             if (text.includes('youtube.com') || text.includes('youtu.be')) {
-                bot.sendMessage(chatId, "🎥 偵測到影片，正在讀取字幕並進行內容煉金...");
+                bot.sendMessage(chatId, "🎥 偵測到影片，正在讀取字幕並進行內容煉金... (Ver 1222)");
                 inputData = await getYouTubeContent(text);
             } else {
-                bot.sendMessage(chatId, "🌐 偵測到連結，正在爬取網頁並進行內容煉金...");
+                bot.sendMessage(chatId, "🌐 偵測到連結，正在爬取網頁並進行內容煉金... (Ver 1222)");
                 inputData = await getWebContent(text);
             }
         }
-        // === 處理檔案 (PDF/TXT) ===
+        // === C. 處理檔案 (PDF/TXT) ===
         else if (msg.document) {
             const mime = msg.document.mime_type;
             if (mime === 'application/pdf' || mime === 'text/plain') {
@@ -179,9 +180,8 @@ bot.on('message', async (msg) => {
                 return bot.sendMessage(chatId, "⚠️ 目前僅支援 PDF 與 TXT 文件格式。");
             }
         }
-        // === 普通文字 (當作素材直接處理) ===
+        // === D. 普通文字 (當作素材直接處理) ===
         else if (!isRevision) {
-             // 如果不是連結、不是檔案、也不是回覆，就把文字當作原文素材
              inputData = text;
         }
 
@@ -199,13 +199,17 @@ bot.on('message', async (msg) => {
 
     } catch (error) {
         console.error("處理錯誤:", error);
-        bot.sendMessage(chatId, `⚠️ 發生錯誤：${error.message}`);
+        // 優化錯誤訊息顯示
+        let errorMsg = error.message;
+        if (errorMsg.includes('404')) errorMsg = "模型名稱錯誤或版本不符 (404)";
+        if (errorMsg.includes('409')) errorMsg = "系統忙碌中 (Conflict)";
+        bot.sendMessage(chatId, `⚠️ 發生錯誤：${errorMsg}`);
     }
 });
 
-// --- Express 伺服器 (為了 Render Health Check) ---
+// --- Express 伺服器 (Render Health Check) ---
 app.get('/', (req, res) => {
-    res.send('Info Commander is Running (Ver Production-1.0)');
+    res.send('Info Commander is Running (Ver 1222 Stable)');
 });
 
 app.listen(port, () => {

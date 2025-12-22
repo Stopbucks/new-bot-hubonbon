@@ -1,7 +1,7 @@
 {
-  "name": "info-commander-bot",
-  "version": "1.0.0",
-  "description": "Telegram bot for converting content into social media posts",
+  "name": "info-commander-bot-1222",
+  "version": "1.2.22",
+  "description": "Telegram bot powered by Gemini 1.5 Flash (Ver 1222)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -17,6 +17,6 @@
     "youtube-transcript": "^1.0.6"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": "20.x"
   }
 }
