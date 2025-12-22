@@ -14,12 +14,12 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 標記版本為 121905 (Final)
+// 標記版本為 121906_test (Final)
 app.get('/', (req, res) => res.send('機器人運作中 (Ver 121905 - Final Stable)'));
 
 // 機器人邏輯
 bot.on('text', async (ctx) => {
-    console.log(`[121905] 收到訊息: ${ctx.message.text}`);
+    console.log(`[121900_test] 收到訊息: ${ctx.message.text}`);
     await ctx.sendChatAction('typing');
 
     try {
@@ -31,9 +31,9 @@ bot.on('text', async (ctx) => {
         const text = response.text();
         
         await ctx.reply(text);
-        console.log('[121905] 回復成功！');
+        console.log('[121906_test] 回復成功！');
     } catch (error) {
-        console.error('[121905] 發生錯誤:', error);
+        console.error('[121906_test] 發生錯誤:', error);
         await ctx.reply(`抱歉，機器人休息中 (Ver 121905)。錯誤訊息：${error.message}`);
     }
 });
