@@ -95,7 +95,7 @@ async function getWebContent(url) {
 // 3. Gemini 生成邏輯
 async function callGemini(userContent, isRevision = false, revisionInstruction = "") {
     // 這裡建議使用穩定版模型，若要嘗鮮可改為 "gemini-3-flash-preview"
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-001" });
 
     let finalPrompt = "";
     if (isRevision) {
