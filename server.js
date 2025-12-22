@@ -1,5 +1,5 @@
 // ==========================================
-// Info Commander (Ver 1222 - Final Stable)
+// Info Commander (Ver 1222_03 - Compatibility Mode)
 // ==========================================
 
 require('dotenv').config();
@@ -16,7 +16,7 @@ const https = require('https');
 // --- 環境變數檢查 ---
 const token = process.env.TELEGRAM_TOKEN;
 const geminiKey = process.env.GEMINI_API_KEY;
-const port = process.env.PORT || 10000; // Render 預設 Port 為 10000
+const port = process.env.PORT || 10000;
 
 if (!token || !geminiKey) {
     console.error("❌ 錯誤：請確認 .env 或 Render 環境變數中包含 TELEGRAM_TOKEN 與 GEMINI_API_KEY");
@@ -28,7 +28,7 @@ const bot = new TelegramBot(token, { polling: true });
 const genAI = new GoogleGenerativeAI(geminiKey);
 const app = express();
 
-console.log("🚀 System Starting... (Ver 1222)");
+console.log("🚀 System Starting... (Ver 1222_03 - Gemini Pro)");
 
 // --- 核心：System Prompt (社群編輯大腦) ---
 const SYSTEM_PROMPT = `
@@ -94,10 +94,10 @@ async function getWebContent(url) {
     }
 }
 
-// 3. Gemini 生成邏輯 (Ver 1222 Fix: 使用標準名稱)
+// 3. Gemini 生成邏輯 (Ver 1222_03: 使用 gemini-pro 相容模式)
 async function callGemini(userContent, isRevision = false, revisionInstruction = "") {
-    // ✅ 關鍵修正：使用最通用的標準模型名稱，避免 404
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    // ✅ 關鍵修正：使用 gemini-pro，確保所有帳號權限皆可相容
+    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
 
     let finalPrompt = "";
     if (isRevision) {
@@ -154,10 +154,10 @@ bot.on('message', async (msg) => {
         // === B. 處理 URL (YouTube 或 網頁) ===
         else if (text && (text.startsWith('http') || text.startsWith('www'))) {
             if (text.includes('youtube.com') || text.includes('youtu.be')) {
-                bot.sendMessage(chatId, "🎥 偵測到影片，正在讀取字幕並進行內容煉金... (Ver 1222)");
+                bot.sendMessage(chatId, "🎥 偵測到影片，正在讀取字幕並進行內容煉金... (Ver 1222_03)");
                 inputData = await getYouTubeContent(text);
             } else {
-                bot.sendMessage(chatId, "🌐 偵測到連結，正在爬取網頁並進行內容煉金... (Ver 1222)");
+                bot.sendMessage(chatId, "🌐 偵測到連結，正在爬取網頁並進行內容煉金... (Ver 1222_03)");
                 inputData = await getWebContent(text);
             }
         }
@@ -199,9 +199,9 @@ bot.on('message', async (msg) => {
 
     } catch (error) {
         console.error("處理錯誤:", error);
-        // 優化錯誤訊息顯示
         let errorMsg = error.message;
-        if (errorMsg.includes('404')) errorMsg = "模型名稱錯誤或版本不符 (404)";
+        // 錯誤訊息轉譯
+        if (errorMsg.includes('404')) errorMsg = "模型名稱錯誤 (404) - 請確認使用 gemini-pro";
         if (errorMsg.includes('409')) errorMsg = "系統忙碌中 (Conflict)";
         bot.sendMessage(chatId, `⚠️ 發生錯誤：${errorMsg}`);
     }
@@ -209,7 +209,7 @@ bot.on('message', async (msg) => {
 
 // --- Express 伺服器 (Render Health Check) ---
 app.get('/', (req, res) => {
-    res.send('Info Commander is Running (Ver 1222 Stable)');
+    res.send('Info Commander is Running (Ver 1222_03 Compatible)');
 });
 
 app.listen(port, () => {
