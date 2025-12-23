@@ -1,18 +1,11 @@
 /**
  * ==============================================================================
- * 🛠️ Info Commander Development Log (開發日誌)
+ * 🛠️ Info Commander Development Log
  * ==============================================================================
  * [Date]       [Version]     [Changes]
- * 2025-12-22   Ver 1222      Initial Fix: 升級 SDK 至 ^0.24.0，嘗試解決 404。
- * 2025-12-22   Ver 1222_02   Stability: 優化錯誤處理，解決 Render 409 Conflict 問題。
- * 2025-12-22   Ver 1222_03   Compat: 暫降至 gemini-pro 以測試舊 API Key 相容性。
- * 2025-12-23   Ver 1223_04   Final: 配合新 API Key，模型升級為 gemini-1.5-flash (標準版)。
+ * 2025-12-23   Ver 1223_05   Target Fix: 針對學生專案，鎖定模型為 gemini-3-flash-preview。
  * ==============================================================================
  */
-
-// ==========================================
-// Info Commander (Ver 1223_04 - Final Fix)
-// ==========================================
 
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
@@ -22,8 +15,6 @@ const { YoutubeTranscript } = require('youtube-transcript');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const pdf = require('pdf-parse');
-const fs = require('fs');
-const https = require('https');
 
 // --- 環境變數檢查 ---
 const token = process.env.TELEGRAM_TOKEN;
@@ -40,9 +31,9 @@ const bot = new TelegramBot(token, { polling: true });
 const genAI = new GoogleGenerativeAI(geminiKey);
 const app = express();
 
-console.log("🚀 System Starting... (Ver 1223_04 - Gemini 1.5 Flash)");
+console.log("🚀 System Starting... (Ver 1223_05 - Gemini 3 Flash Preview)");
 
-// --- 核心：System Prompt (社群編輯大腦) ---
+// --- 核心：System Prompt ---
 const SYSTEM_PROMPT = `
 你是一位資深的「社群新聞編輯」，代號 Info Commander。
 請將用戶提供的內容（影片字幕、文章、文件）改寫為一篇「Facebook 社群深入淺出文」。
@@ -75,10 +66,9 @@ async function getYouTubeContent(url) {
         if (!videoIdMatch) return null;
         const videoId = videoIdMatch[1];
         
-        // 嘗試抓取字幕 (優先抓中文，若無則抓英文，再無則抓自動產生)
         const transcriptItems = await YoutubeTranscript.fetchTranscript(videoId, { lang: 'zh-TW' })
             .catch(() => YoutubeTranscript.fetchTranscript(videoId, { lang: 'en' }))
-            .catch(() => YoutubeTranscript.fetchTranscript(videoId)); // 最後嘗試預設
+            .catch(() => YoutubeTranscript.fetchTranscript(videoId));
 
         return transcriptItems.map(item => item.text).join(' ');
     } catch (error) {
@@ -93,23 +83,19 @@ async function getWebContent(url) {
             headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
         });
         const $ = cheerio.load(data);
-        
-        // 移除干擾元素
         $('script, style, nav, footer, header, .ads, .advertisement').remove();
-        
-        // 優先抓取 article 標籤，若無則抓 body
         let content = $('article').text().trim() || $('body').text().trim();
-        // 壓縮多餘空白
-        return content.replace(/\s+/g, ' ').substring(0, 15000); // 限制長度以免爆 token
+        return content.replace(/\s+/g, ' ').substring(0, 15000);
     } catch (error) {
         throw new Error("無法讀取網頁內容 (可能網站有阻擋爬蟲)");
     }
 }
 
-// 3. Gemini 生成邏輯 (Ver 1223_04: 使用標準 1.5 Flash)
+// 3. Gemini 生成邏輯 (Ver 1223_05: 使用 gemini-3-flash-preview)
 async function callGemini(userContent, isRevision = false, revisionInstruction = "") {
-    // ✅ 關鍵修正：使用標準名稱 "gemini-1.5-flash"，確保新 API Key 可用
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    // ✅ 關鍵修正：針對您的學生專案，指定使用 gemini-3-flash-preview
+    // 這是根據您 AI Studio 截圖右側欄位顯示的名稱設定的
+    const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
 
     let finalPrompt = "";
     if (isRevision) {
@@ -145,10 +131,8 @@ bot.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = msg.text;
 
-    // 忽略非文字且非檔案的訊息
     if (!text && !msg.document) return;
 
-    // 0. 狀態顯示
     bot.sendChatAction(chatId, 'typing');
 
     try {
@@ -156,31 +140,29 @@ bot.on('message', async (msg) => {
         let isRevision = false;
         let revisionInstruction = "";
 
-        // === A. 判斷是否為「回覆修改」(Revision) ===
+        // Revision Logic
         if (msg.reply_to_message && msg.reply_to_message.from.id === bot.id) {
             console.log(`[Revision] 用戶要求修改文章`);
-            inputData = msg.reply_to_message.text; // 舊的文章內容
+            inputData = msg.reply_to_message.text;
             isRevision = true;
-            revisionInstruction = text; // 用戶的新指令
+            revisionInstruction = text;
         } 
-        // === B. 處理 URL (YouTube 或 網頁) ===
+        // YouTube & Web
         else if (text && (text.startsWith('http') || text.startsWith('www'))) {
             if (text.includes('youtube.com') || text.includes('youtu.be')) {
-                bot.sendMessage(chatId, "🎥 偵測到影片，正在讀取字幕並進行內容煉金... (Ver 1223_04)");
+                bot.sendMessage(chatId, "🎥 偵測到影片，正在讀取字幕並進行內容煉金... (Ver 1223_05)");
                 inputData = await getYouTubeContent(text);
             } else {
-                bot.sendMessage(chatId, "🌐 偵測到連結，正在爬取網頁並進行內容煉金... (Ver 1223_04)");
+                bot.sendMessage(chatId, "🌐 偵測到連結，正在爬取網頁並進行內容煉金... (Ver 1223_05)");
                 inputData = await getWebContent(text);
             }
         }
-        // === C. 處理檔案 (PDF/TXT) ===
+        // PDF
         else if (msg.document) {
             const mime = msg.document.mime_type;
             if (mime === 'application/pdf' || mime === 'text/plain') {
                 bot.sendMessage(chatId, "📄 收到文件，正在解析內容...");
                 const fileLink = await bot.getFileLink(msg.document.file_id);
-                
-                // 下載並解析
                 const response = await axios({ url: fileLink, method: 'GET', responseType: 'arraybuffer' });
                 if (mime === 'application/pdf') {
                     const data = await pdf(response.data);
@@ -192,20 +174,13 @@ bot.on('message', async (msg) => {
                 return bot.sendMessage(chatId, "⚠️ 目前僅支援 PDF 與 TXT 文件格式。");
             }
         }
-        // === D. 普通文字 (當作素材直接處理) ===
         else if (!isRevision) {
              inputData = text;
         }
 
-        // 若無內容則跳出
-        if (!inputData) {
-            return bot.sendMessage(chatId, "❌ 無法提取內容，請確認連結有效或檔案可讀取。");
-        }
+        if (!inputData) return bot.sendMessage(chatId, "❌ 無法提取內容。");
 
-        // === 呼叫 Gemini ===
         const responseText = await callGemini(inputData, isRevision, revisionInstruction);
-        
-        // 回傳結果
         await bot.sendMessage(chatId, responseText);
         console.log(`[Success] 回應已發送 (ChatID: ${chatId})`);
 
@@ -213,17 +188,16 @@ bot.on('message', async (msg) => {
         console.error("處理錯誤:", error);
         let errorMsg = error.message;
         // 錯誤訊息優化
-        if (errorMsg.includes('404')) errorMsg = "模型名稱錯誤 (404) - 請檢查模型支援";
+        if (errorMsg.includes('404')) errorMsg = "權限錯誤 (404) - 您的帳號似乎不支援此模型";
         if (errorMsg.includes('409')) errorMsg = "系統忙碌中 (Conflict)";
         bot.sendMessage(chatId, `⚠️ 發生錯誤：${errorMsg}`);
     }
 });
 
-// --- Express 伺服器 (Render Health Check) ---
+// Render Health Check
 app.get('/', (req, res) => {
-    res.send('Info Commander is Running (Ver 1223_04 Stable)');
+    res.send('Info Commander is Running (Ver 1223_05 Gemini 3)');
 });
-
 app.listen(port, () => {
     console.log(`Server is running on port ${port}`);
 });
