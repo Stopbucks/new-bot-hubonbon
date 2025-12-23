@@ -4,15 +4,15 @@
  * ==============================================================================
  * [Date]       [Version]     [Changes]
  * 2025-12-23   Ver 1223_05   Target Fix: 針對學生專案，鎖定模型為 gemini-3-flash-preview。
- * 2025-12-23   Ver 1223_06   Critical Fix: 更換 YouTube 解析引擎為 youtubei.js，解決 Render IP 封鎖問題。
+ * 2025-12-23   Ver 1223_06   Critical Fix: 更換為 youtubei.js 引擎。
+ * 2025-12-23   Ver 1223_07   Critical Fix: YouTube Client 切換為 WEB 模式，解決 400/ParsingError。
  * ==============================================================================
  */
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const express = require('express');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-// const { YoutubeTranscript } = require('youtube-transcript'); // 舊版已移除
-const { Innertube, UniversalCache } = require('youtubei.js'); // 新版引入
+const { Innertube, UniversalCache } = require('youtubei.js');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const pdf = require('pdf-parse');
@@ -32,7 +32,7 @@ const bot = new TelegramBot(token, { polling: true });
 const genAI = new GoogleGenerativeAI(geminiKey);
 const app = express();
 
-console.log("🚀 System Starting... (Ver 1223_06 - Gemini 3 Flash Preview)");
+console.log("🚀 System Starting... (Ver 1223_07 - Gemini 3 Flash Preview)");
 
 // --- 核心：System Prompt ---
 const SYSTEM_PROMPT = `
@@ -60,19 +60,24 @@ const SYSTEM_PROMPT = `
 
 // --- 工具函數 ---
 
-// 1. 抓取 YouTube 字幕 (Ver 1223_06: 改用 youtubei.js 模擬 Android 客戶端)
+// 1. 抓取 YouTube 字幕 (Ver 1223_07: 改用 WEB 客戶端以減少 ParsingError)
 async function getYouTubeContent(url) {
     try {
         const videoIdMatch = url.match(/(?:youtu\.be\/|youtube\.com\/(?:.*v=|.*\/)([^#&?]*))/);
         if (!videoIdMatch) return null;
         const videoId = videoIdMatch[1];
         
-        console.log(`[YouTube] 正在嘗試透過 InnerTube 讀取影片: ${videoId}`);
+        console.log(`[YouTube] 正在嘗試透過 InnerTube (Web Mode) 讀取影片: ${videoId}`);
 
-        // 初始化 InnerTube (模擬 Android 客戶端，避開 IP 封鎖)
+        // ✅ 關鍵修改：強制使用 'WEB' (桌面瀏覽器) 客戶端
+        // 這通常比預設的 Android 客戶端更能抵抗資料中心 IP 的 Parsing Error
         const youtube = await Innertube.create({
             cache: new UniversalCache(false),
-            generate_session_locally: true
+            generate_session_locally: true,
+            lang: 'zh-TW',     // 強制指定語言
+            location: 'TW',    // 強制指定地區
+            retrieve_player: false, // 不讀取撥放器 JS，加速並減少錯誤
+            client_type: 'WEB' // 偽裝成網頁版
         });
 
         // 取得影片資訊
@@ -81,8 +86,7 @@ async function getYouTubeContent(url) {
         // 嘗試取得字幕
         const transcriptData = await info.getTranscript();
         
-        // 解析字幕結構 (youtubei.js 回傳的是片段陣列)
-        // 這裡通常會抓到影片預設的最優先字幕
+        // 解析字幕結構
         if (transcriptData && transcriptData.transcript && transcriptData.transcript.content) {
              const fullText = transcriptData.transcript.content.body.initial_segments
                 .map(segment => segment.snippet.text)
@@ -94,8 +98,12 @@ async function getYouTubeContent(url) {
         throw new Error("找不到可用的字幕軌道");
 
     } catch (error) {
-        console.error("YouTube 讀取失敗:", error);
-        throw new Error("無法讀取影片字幕 (可能受地區限制或無字幕，系統已嘗試使用抗封鎖模式)");
+        console.error("YouTube 讀取失敗詳細資訊:", error);
+        // 如果是 400 錯誤，通常是 YouTube 針對該 IP 暫時鎖定字幕 API
+        if (error.message.includes('400')) {
+            throw new Error("YouTube 拒絕存取字幕 (IP 受限)，請稍後再試或更換影片來源");
+        }
+        throw new Error("無法讀取影片字幕 (可能受地區限制或無字幕)");
     }
 }
 
@@ -116,7 +124,7 @@ async function getWebContent(url) {
 
 // 3. Gemini 生成邏輯 (Ver 1223_05: 使用 gemini-3-flash-preview)
 async function callGemini(userContent, isRevision = false, revisionInstruction = "") {
-    // ✅ 關鍵修正：針對您的學生專案，指定使用 gemini-3-flash-preview
+    // ✅ 針對您的學生專案，指定使用 gemini-3-flash-preview
     const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
 
     let finalPrompt = "";
@@ -172,10 +180,10 @@ bot.on('message', async (msg) => {
         // YouTube & Web
         else if (text && (text.startsWith('http') || text.startsWith('www'))) {
             if (text.includes('youtube.com') || text.includes('youtu.be')) {
-                bot.sendMessage(chatId, "🎥 偵測到影片，正在切換至抗封鎖模式讀取字幕... (Ver 1223_06)");
+                bot.sendMessage(chatId, "🎥 偵測到影片，正在切換至抗封鎖(WEB)模式讀取字幕... (Ver 1223_07)");
                 inputData = await getYouTubeContent(text);
             } else {
-                bot.sendMessage(chatId, "🌐 偵測到連結，正在爬取網頁並進行內容煉金... (Ver 1223_06)");
+                bot.sendMessage(chatId, "🌐 偵測到連結，正在爬取網頁並進行內容煉金... (Ver 1223_07)");
                 inputData = await getWebContent(text);
             }
         }
@@ -211,14 +219,14 @@ bot.on('message', async (msg) => {
         let errorMsg = error.message;
         // 錯誤訊息優化
         if (errorMsg.includes('404')) errorMsg = "權限錯誤 (404) - 您的帳號似乎不支援此模型";
-        if (errorMsg.includes('409')) errorMsg = "系統忙碌中 (Conflict)";
+        if (errorMsg.includes('409')) errorMsg = "系統忙碌中 (Conflict) - 請稍後再試";
         bot.sendMessage(chatId, `⚠️ 發生錯誤：${errorMsg}`);
     }
 });
 
 // Render Health Check
 app.get('/', (req, res) => {
-    res.send('Info Commander is Running (Ver 1223_06 Gemini 3 - AntiBlock)');
+    res.send('Info Commander is Running (Ver 1223_07 Gemini 3 - AntiBlock WEB)');
 });
 app.listen(port, () => {
     console.log(`Server is running on port ${port}`);
