@@ -4,14 +4,15 @@
  * ==============================================================================
  * [Date]       [Version]     [Changes]
  * 2025-12-23   Ver 1223_05   Target Fix: 針對學生專案，鎖定模型為 gemini-3-flash-preview。
+ * 2025-12-23   Ver 1223_06   Critical Fix: 更換 YouTube 解析引擎為 youtubei.js，解決 Render IP 封鎖問題。
  * ==============================================================================
  */
-
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const express = require('express');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const { YoutubeTranscript } = require('youtube-transcript');
+// const { YoutubeTranscript } = require('youtube-transcript'); // 舊版已移除
+const { Innertube, UniversalCache } = require('youtubei.js'); // 新版引入
 const axios = require('axios');
 const cheerio = require('cheerio');
 const pdf = require('pdf-parse');
@@ -31,7 +32,7 @@ const bot = new TelegramBot(token, { polling: true });
 const genAI = new GoogleGenerativeAI(geminiKey);
 const app = express();
 
-console.log("🚀 System Starting... (Ver 1223_05 - Gemini 3 Flash Preview)");
+console.log("🚀 System Starting... (Ver 1223_06 - Gemini 3 Flash Preview)");
 
 // --- 核心：System Prompt ---
 const SYSTEM_PROMPT = `
@@ -59,20 +60,42 @@ const SYSTEM_PROMPT = `
 
 // --- 工具函數 ---
 
-// 1. 抓取 YouTube 字幕
+// 1. 抓取 YouTube 字幕 (Ver 1223_06: 改用 youtubei.js 模擬 Android 客戶端)
 async function getYouTubeContent(url) {
     try {
         const videoIdMatch = url.match(/(?:youtu\.be\/|youtube\.com\/(?:.*v=|.*\/)([^#&?]*))/);
         if (!videoIdMatch) return null;
         const videoId = videoIdMatch[1];
         
-        const transcriptItems = await YoutubeTranscript.fetchTranscript(videoId, { lang: 'zh-TW' })
-            .catch(() => YoutubeTranscript.fetchTranscript(videoId, { lang: 'en' }))
-            .catch(() => YoutubeTranscript.fetchTranscript(videoId));
+        console.log(`[YouTube] 正在嘗試透過 InnerTube 讀取影片: ${videoId}`);
 
-        return transcriptItems.map(item => item.text).join(' ');
+        // 初始化 InnerTube (模擬 Android 客戶端，避開 IP 封鎖)
+        const youtube = await Innertube.create({
+            cache: new UniversalCache(false),
+            generate_session_locally: true
+        });
+
+        // 取得影片資訊
+        const info = await youtube.getInfo(videoId);
+        
+        // 嘗試取得字幕
+        const transcriptData = await info.getTranscript();
+        
+        // 解析字幕結構 (youtubei.js 回傳的是片段陣列)
+        // 這裡通常會抓到影片預設的最優先字幕
+        if (transcriptData && transcriptData.transcript && transcriptData.transcript.content) {
+             const fullText = transcriptData.transcript.content.body.initial_segments
+                .map(segment => segment.snippet.text)
+                .join(' ');
+             console.log(`[YouTube] 字幕讀取成功，長度: ${fullText.length}`);
+             return fullText;
+        }
+        
+        throw new Error("找不到可用的字幕軌道");
+
     } catch (error) {
-        throw new Error("無法讀取影片字幕 (可能未開啟字幕功能或不支援)");
+        console.error("YouTube 讀取失敗:", error);
+        throw new Error("無法讀取影片字幕 (可能受地區限制或無字幕，系統已嘗試使用抗封鎖模式)");
     }
 }
 
@@ -94,7 +117,6 @@ async function getWebContent(url) {
 // 3. Gemini 生成邏輯 (Ver 1223_05: 使用 gemini-3-flash-preview)
 async function callGemini(userContent, isRevision = false, revisionInstruction = "") {
     // ✅ 關鍵修正：針對您的學生專案，指定使用 gemini-3-flash-preview
-    // 這是根據您 AI Studio 截圖右側欄位顯示的名稱設定的
     const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
 
     let finalPrompt = "";
@@ -150,10 +172,10 @@ bot.on('message', async (msg) => {
         // YouTube & Web
         else if (text && (text.startsWith('http') || text.startsWith('www'))) {
             if (text.includes('youtube.com') || text.includes('youtu.be')) {
-                bot.sendMessage(chatId, "🎥 偵測到影片，正在讀取字幕並進行內容煉金... (Ver 1223_05)");
+                bot.sendMessage(chatId, "🎥 偵測到影片，正在切換至抗封鎖模式讀取字幕... (Ver 1223_06)");
                 inputData = await getYouTubeContent(text);
             } else {
-                bot.sendMessage(chatId, "🌐 偵測到連結，正在爬取網頁並進行內容煉金... (Ver 1223_05)");
+                bot.sendMessage(chatId, "🌐 偵測到連結，正在爬取網頁並進行內容煉金... (Ver 1223_06)");
                 inputData = await getWebContent(text);
             }
         }
@@ -196,7 +218,7 @@ bot.on('message', async (msg) => {
 
 // Render Health Check
 app.get('/', (req, res) => {
-    res.send('Info Commander is Running (Ver 1223_05 Gemini 3)');
+    res.send('Info Commander is Running (Ver 1223_06 Gemini 3 - AntiBlock)');
 });
 app.listen(port, () => {
     console.log(`Server is running on port ${port}`);

@@ -1,7 +1,7 @@
 {
   "name": "info-commander-bot-1223",
-  "version": "1.2.23-05",
-  "description": "Telegram bot powered by Gemini 3 Flash (Ver 1223_05)",
+  "version": "1.2.23-06",
+  "description": "Telegram bot powered by Gemini 3 Flash (Ver 1223_06)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -14,7 +14,7 @@
     "node-telegram-bot-api": "^0.64.0",
     "pdf-parse": "^1.1.1",
     "@google/generative-ai": "^0.24.0",
-    "youtube-transcript": "^1.0.6"
+    "youtubei.js": "^10.0.0"
   },
   "engines": {
     "node": "20.x"
