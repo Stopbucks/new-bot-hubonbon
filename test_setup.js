@@ -3,7 +3,7 @@
  * 用途：確認 .env 設定正確，且所有 API 都能正常回傳數據
  * 執行指令：node test_setup.js
  */
-const { searchYouTube, searchGoogle, generateAnalysis } = require('./services');
+const { searchYouTube, searchGoogle, generateAnalysis } = require('./services_Backup_big15');
 
 async function testRun() {
     console.log('=== 🚀 開始測試 Big 1.5 流程 ===');
