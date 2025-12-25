@@ -1,25 +1,28 @@
 /**
  * ==============================================================================
- * 🛠️ Info Commander Service Module (Final Release)
+ * 🛠️ Info Commander Service Module (Big 2  Ver 1225_16 Edition)
  * ==============================================================================
- * [Features]
- * 1. Search: YouTube (API) + Google News
- * 2. Monitor: Channel Latest (Returns Array of up to 3 videos)
- * 3. Trends: Google Trends RSS Parsing
- * 4. Brain: Gemini Inference Mode (Video Desc + Title)
+ * [Status]
+ * 1. Optimized for Big 2 Server (Key alignment)
+ * 2. Removed deprecated functions (Old XML Trends, Old Analysis)
+ * 3. Preserved YouTube Data API v3 Wrappers
  * ==============================================================================
  */
 
 require('dotenv').config();
 const { google } = require('googleapis');
 const axios = require('axios');
-const xml2js = require('xml2js');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-// --- 初始化 ---
-const youtube = google.youtube({ version: 'v3', auth: process.env.GOOGLE_CLOUD_API_KEY });
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY_NEW);
-const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
+// --- 初始化 (已校準變數名稱) ---
+// 統一使用 GOOGLE_SEARCH_KEY (若 .env 沒改好，自動降級抓舊變數)
+const googleKey = process.env.GOOGLE_SEARCH_KEY || process.env.GOOGLE_CLOUD_API_KEY;
+const youtube = google.youtube({ version: 'v3', auth: googleKey });
+
+// 統一使用 GEMINI_API_KEY
+const geminiKey = process.env.GEMINI_API_KEY;
+const genAI = new GoogleGenerativeAI(geminiKey);
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // 升級模型與 Server 一致
 
 // 📅 工具：計算時間
 function getDateDaysAgo(days) {
@@ -75,7 +78,7 @@ async function getMostPopularVideos(regionCode) {
     }
 }
 
-// A-3. 檢查頻道最新影片 (05:10 監控用) - ✅ 已更新為回傳陣列
+// A-3. 檢查頻道最新影片 (05:10 監控用)
 async function checkChannelLatestVideo(channelId) {
     try {
         // 1. 找該頻道過去 24 小時內的最新影片 (最多 3 支)
@@ -109,32 +112,17 @@ async function checkChannelLatestVideo(channelId) {
 }
 
 // ==========================================
-// B. Google Trends RSS (06:00 全球熱搜用)
-// ==========================================
-async function getGoogleTrends(geo) {
-    try {
-        const rssUrl = `https://trends.google.com/trends/trendingsearches/daily/rss?geo=${geo}`;
-        const { data } = await axios.get(rssUrl);
-        const parser = new xml2js.Parser();
-        const result = await parser.parseStringPromise(data);
-        const items = result.rss.channel[0].item.slice(0, 3);
-        return items.map(item => ({
-            title: item.title[0],
-            traffic: item['ht:approx_traffic'] ? item['ht:approx_traffic'][0] : 'N/A'
-        }));
-    } catch (error) {
-        console.error(`[Trends Error] Geo: ${geo}`, error.message);
-        return [];
-    }
-}
-
-// ==========================================
-// C. Google Search (輔助偵查)
+// B. Google Search (輔助偵查)
 // ==========================================
 async function searchGoogle(query) {
     try {
         const res = await axios.get('https://www.googleapis.com/customsearch/v1', {
-            params: { key: process.env.GOOGLE_CLOUD_API_KEY, cx: process.env.SEARCH_ENGINE_ID, q: query, num: 3 }
+            params: { 
+                key: googleKey, // 使用校準後的 Key
+                cx: process.env.SEARCH_ENGINE_ID, 
+                q: query, 
+                num: 3 
+            }
         });
         if (!res.data.items) return [];
         return res.data.items.map(item => ({ title: item.title, snippet: item.snippet }));
@@ -142,28 +130,10 @@ async function searchGoogle(query) {
 }
 
 // ==========================================
-// D. Gemini 大腦 (分析與推測)
+// C. Gemini 輔助推測 (僅保留推測功能)
 // ==========================================
 
-// D-1. 標準分析
-async function generateAnalysis(videoData, newsData) {
-    try {
-        const newsContext = newsData.map((n, i) => `${i+1}. [${n.title}]: ${n.snippet}`).join('\n');
-        const prompt = `
-        你是一位社群情報官。請根據以下素材寫一篇「社群情報快訊」。
-        【YouTube 資訊】標題：${videoData.title}\n頻道：${videoData.channel}
-        【網路搜查】\n${newsContext}
-        【任務】
-        1. 標題：用 " ▌ " 開頭。
-        2. 摘要：100字內總結。
-        3. 補充：結合網路搜查結果。
-        `;
-        const result = await model.generateContent(prompt);
-        return result.response.text();
-    } catch (error) { return "⚠️ 分析失敗"; }
-}
-
-// D-2. 推測分析 (含警語)
+// C-1. 推測分析 (含警語) - 用於頻道監控
 async function generateInference(videoData, newsData) {
     try {
         const newsContext = newsData.map((n, i) => `${i+1}. [${n.title}]: ${n.snippet}`).join('\n');
@@ -183,11 +153,11 @@ async function generateInference(videoData, newsData) {
     } catch (error) { return "⚠️ 推測失敗"; }
 }
 
-// E. Phase 2 圖片介面 (預留)
-async function searchImage(keyword) { return null; }
-
+// 匯出模組 (只匯出 Server 真正需要的)
 module.exports = { 
-    searchYouTube, getMostPopularVideos, checkChannelLatestVideo, 
-    getGoogleTrends, searchGoogle, 
-    generateAnalysis, generateInference, searchImage 
+    searchYouTube, 
+    getMostPopularVideos, 
+    checkChannelLatestVideo, 
+    searchGoogle, 
+    generateInference
 };

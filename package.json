@@ -16,6 +16,7 @@
     "node-schedule": "^2.1.1",
     "node-telegram-bot-api": "^0.64.0",
     "pdf-parse": "^1.1.1",
+    "rss-parser": "^3.13.0",
     "xml2js": "^0.6.2",
     "youtubei.js": "^10.0.0"
   },
