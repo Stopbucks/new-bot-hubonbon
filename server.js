@@ -189,4 +189,95 @@ schedule.scheduleJob('0 22 * * *', async function(){
 
     try {
         for (const t of targets) {
-            const rssUrl = `
+            const rssUrl = `https://trends.google.com/trends/trendingsearches/daily/rss?geo=${t.geo}`;
+            const feed = await parser.parseURL(rssUrl);
+            const top3 = feed.items.slice(0, 3);
+            trendReport += `\n${t.flag} **${t.name}**\n`;
+            top3.forEach((item, i) => {
+                const safeKeyword = item.title.replace(/\s+/g, '_').replace(/[^\w\u4e00-\u9fa5_]/g, '');
+                trendReport += `${i+1}. ${item.title}\n   👉 /search_${safeKeyword}_1\n`;
+            });
+        }
+        await bot.sendMessage(chatId, trendReport);
+    } catch (e) {
+        console.error("RSS 熱搜錯誤:", e.message);
+        await bot.sendMessage(chatId, "⚠️ 熱搜讀取部分失敗，請檢查 Log");
+    }
+});
+
+// 任務 3: 08:00 每日議題 (序列化 & Gemini 3 & Router)
+schedule.scheduleJob('0 0 * * *', async function(){
+    const chatId = process.env.MY_CHAT_ID;
+    if (!chatId) return;
+    console.log('⏰ [08:00 Job] 啟動每日議題 (Gemini 3 Mode)...');
+
+    const topics = (process.env.DAILY_TOPIC || '').split(/[,，]/).map(t => t.trim()).filter(t => t);
+    
+    for (const topic of topics) {
+        try {
+            console.log(`\n=== [Daily Topic] 處理: ${topic} ===`);
+            const ytData = await searchYouTube(topic, 1);
+            if (!ytData) { console.log(`跳過 (無影片)`); continue; }
+            
+            const newsData = await searchGoogle(ytData.title);
+            const analysis = await generateAnalysisV2(ytData, newsData);
+            const imageUrl = await fetchSmartImage(analysis.image_decision.keyword, analysis.image_decision.type);
+
+            if (imageUrl) await bot.sendPhoto(chatId, imageUrl, { caption: analysis.content.substring(0, 1000) });
+            else await bot.sendMessage(chatId, analysis.content);
+
+            const payload = { topic: topic, title: ytData.title, content: analysis.content, imageUrl: imageUrl || '', url: ytData.url, timestamp: new Date().toISOString() };
+            await dispatchToSocial(payload);
+
+        } catch (error) { console.error(`❌ 議題 ${topic} 失敗:`, error.message); }
+        
+        console.log(`⏳ 冷卻 10 分鐘...`);
+        await delay(600000); 
+    }
+    console.log(`✅ [08:00 Job] 結束`);
+});
+
+// ==========================================
+// 👤 指令處理
+// ==========================================
+bot.onText(/\/search(.+)/, async (msg, match) => {
+    const chatId = msg.chat.id;
+    let rawInput = match[1].trim().replace(/_/g, ' '); 
+    const inputParts = rawInput.split(/\s+/);
+    let days = 3; let keyword = rawInput;
+    if (inputParts.length > 1 && /^\d+$/.test(inputParts[inputParts.length - 1])) {
+        days = parseInt(inputParts.pop());
+        keyword = inputParts.join(' ');
+    }
+    
+    await bot.sendMessage(chatId, `🔍 [手動偵查] ${keyword} (過去 ${days} 天) - Gemini 3...`);
+    try {
+        const ytData = await searchYouTube(keyword, days);
+        if (!ytData) return bot.sendMessage(chatId, `❌ 找不到相關影片`);
+        const newsData = await searchGoogle(ytData.title);
+        const analysis = await generateAnalysisV2(ytData, newsData);
+        const imageUrl = await fetchSmartImage(analysis.image_decision.keyword, analysis.image_decision.type);
+        
+        if (imageUrl) await bot.sendPhoto(chatId, imageUrl, { caption: analysis.content.substring(0, 1000) });
+        else await bot.sendMessage(chatId, analysis.content);
+    } catch (e) {
+        console.error(e.message);
+        await bot.sendMessage(chatId, "偵查發生錯誤");
+    }
+});
+
+// 一般聊天 (Gemini 3)
+bot.on('message', async (msg) => {
+    if (msg.text && msg.text.startsWith('/')) return;
+    const chatId = msg.chat.id;
+    if (!msg.text) return;
+    try {
+        // ✅ 聊天也升級為 Gemini 3
+        const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
+        const result = await model.generateContent(`請將內容改寫為 FB 繁體中文貼文，標題用 "  ▌ " 開頭：\n${msg.text}`);
+        await bot.sendMessage(chatId, result.response.text());
+    } catch (e) { console.error(e.message); }
+});
+
+app.get('/', (req, res) => res.send('Info Commander Big 2 (Gemini 3 Edition) Online'));
+app.listen(port, () => console.log(`Server running on port ${port}`));
