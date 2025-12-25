@@ -1,11 +1,11 @@
 /**
  * ==============================================================================
- * 🛠️ Info Commander Service Module (Big 2  Ver 1225_16 Edition)
+ * 🛠️ Info Commander Service Module (War Room Big 2 Edition)
  * ==============================================================================
- * [Status]
- * 1. Optimized for Big 2 Server (Key alignment)
- * 2. Removed deprecated functions (Old XML Trends, Old Analysis)
- * 3. Preserved YouTube Data API v3 Wrappers
+ * [Development Log]
+ * 2025-12-24 | Ver 1224_15 | Optimization: 移除舊版 XML 熱搜與舊分析函式.
+ * 2025-12-25 | Ver 1225_16 | Fix: 統一變數名稱 GOOGLE_SEARCH_KEY.
+ * 2025-12-25 | Ver 1225_17 | Model Upgrade: 全面切換至 Gemini 3 Flash Preview.
  * ==============================================================================
  */
 
@@ -14,15 +14,15 @@ const { google } = require('googleapis');
 const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-// --- 初始化 (已校準變數名稱) ---
-// 統一使用 GOOGLE_SEARCH_KEY (若 .env 沒改好，自動降級抓舊變數)
+// --- 初始化 ---
 const googleKey = process.env.GOOGLE_SEARCH_KEY || process.env.GOOGLE_CLOUD_API_KEY;
 const youtube = google.youtube({ version: 'v3', auth: googleKey });
 
-// 統一使用 GEMINI_API_KEY
 const geminiKey = process.env.GEMINI_API_KEY;
 const genAI = new GoogleGenerativeAI(geminiKey);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // 升級模型與 Server 一致
+
+// ✅ 這裡指定使用 Gemini 3 Flash Preview (同步 Server 設定)
+const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
 
 // 📅 工具：計算時間
 function getDateDaysAgo(days) {
@@ -35,7 +35,7 @@ function getDateDaysAgo(days) {
 // A. YouTube 核心功能 (API Only)
 // ==========================================
 
-// A-1. 關鍵字搜尋 (手動/每日議題用)
+// A-1. 關鍵字搜尋
 async function searchYouTube(keyword, days = 5) {
     try {
         const publishedAfter = getDateDaysAgo(days);
@@ -61,7 +61,7 @@ async function searchYouTube(keyword, days = 5) {
     }
 }
 
-// A-2. 取得地區熱門影片 (05:00 晨報用)
+// A-2. 取得地區熱門影片
 async function getMostPopularVideos(regionCode) {
     try {
         const res = await youtube.videos.list({
@@ -78,10 +78,9 @@ async function getMostPopularVideos(regionCode) {
     }
 }
 
-// A-3. 檢查頻道最新影片 (05:10 監控用)
+// A-3. 檢查頻道最新影片
 async function checkChannelLatestVideo(channelId) {
     try {
-        // 1. 找該頻道過去 24 小時內的最新影片 (最多 3 支)
         const res = await youtube.search.list({
             part: 'snippet', channelId: channelId, order: 'date', type: 'video',
             publishedAfter: getDateDaysAgo(1), maxResults: 3 
@@ -91,10 +90,7 @@ async function checkChannelLatestVideo(channelId) {
 
         const videos = [];
         for (const video of res.data.items) {
-            // 必須額外呼叫 videos.list 才能拿到完整的 description
-            const detailRes = await youtube.videos.list({
-                part: 'snippet', id: video.id.videoId
-            });
+            const detailRes = await youtube.videos.list({ part: 'snippet', id: video.id.videoId });
             const fullDesc = detailRes.data.items[0].snippet.description;
 
             videos.push({
@@ -118,7 +114,7 @@ async function searchGoogle(query) {
     try {
         const res = await axios.get('https://www.googleapis.com/customsearch/v1', {
             params: { 
-                key: googleKey, // 使用校準後的 Key
+                key: googleKey, 
                 cx: process.env.SEARCH_ENGINE_ID, 
                 q: query, 
                 num: 3 
@@ -130,17 +126,14 @@ async function searchGoogle(query) {
 }
 
 // ==========================================
-// C. Gemini 輔助推測 (僅保留推測功能)
+// C. Gemini 輔助推測 (Gemini 3 Powered)
 // ==========================================
-
-// C-1. 推測分析 (含警語) - 用於頻道監控
 async function generateInference(videoData, newsData) {
     try {
         const newsContext = newsData.map((n, i) => `${i+1}. [${n.title}]: ${n.snippet}`).join('\n');
         const prompt = `
         你是一位社群情報官。以下是一支剛發布的熱門影片資訊。
-        由於版權與技術限制，我們無法讀取字幕，請你根據 [影片說明欄] 與 [網路搜尋結果]，
-        為我推測並整理這支影片可能在講什麼。
+        請根據 [影片說明欄] 與 [網路搜尋結果]，推測這支影片的重點。
 
         【影片標題】：${videoData.title}
         【影片說明欄】：${videoData.description}
@@ -153,11 +146,7 @@ async function generateInference(videoData, newsData) {
     } catch (error) { return "⚠️ 推測失敗"; }
 }
 
-// 匯出模組 (只匯出 Server 真正需要的)
 module.exports = { 
-    searchYouTube, 
-    getMostPopularVideos, 
-    checkChannelLatestVideo, 
-    searchGoogle, 
-    generateInference
+    searchYouTube, getMostPopularVideos, checkChannelLatestVideo, 
+    searchGoogle, generateInference 
 };
