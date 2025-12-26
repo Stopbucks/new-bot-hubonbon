@@ -133,7 +133,6 @@ app.post('/api/rss', async (req, res) => {
         { name: 'WSJ', url: 'https://feeds.a.dj.com/rss/WSJcomUSBusiness.xml' },
 
         // 3. 🚀 科技與新創
-        { name: 'TechCrunch', url: 'https://techcrunch.com/feed/' },
         { name: 'Wired', url: 'https://www.wired.com/feed/rss' }
     ];
     // 👆👆👆 ================================== 👆👆👆
