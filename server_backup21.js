@@ -1,9 +1,9 @@
 /**
  * ==============================================================================
- * 🛠️ Info Commander Server (The Controller)
+ * 🛠️ Info Commander Server (The Thin Controller)
  * ==============================================================================
- * [Architecture] Big 1 (PDF) + Big 2 (Cron) + Big 3 (Gate)
- * [Version]      1226_Safe_Integration
+ * [Architecture] Big 2 (Cron) + Big 3 (Event Driven/Stateless)
+ * [Version]      1226_Big3_Unified_Full
  * ==============================================================================
  */
 
@@ -25,57 +25,25 @@ bot.on('polling_error', (error) => console.log(`[Polling Error] ${error.code}`))
 const app = express();
 const port = process.env.PORT || 10000;
 
-console.log("🚀 Commander System Online (Big 1 + Big 2 + Big 3)");
+console.log("🚀 Commander System Online (Big 2 + Big 3 Integrated)");
 
 // 工具：延遲
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // ==========================================
-// 🔔 Big 1: Bridge-room (PDF 讀取) - ✅ 這是新增的區塊
-// ==========================================
-bot.on('document', async (msg) => {
-    // 1. 安全檢查：只允許私聊 (Private)
-    if (msg.chat.type !== 'private') return;
-
-    // 2. 檢查是否為 PDF
-    const mime = msg.document.mime_type;
-    if (!mime || !mime.includes('pdf')) return;
-
-    const chatId = msg.chat.id;
-    const fileId = msg.document.file_id;
-
-    console.log(`[Bridge] 收到 PDF: ${msg.document.file_name}`);
-    await bot.sendMessage(chatId, "📄 收到 PDF，Gemini 正在速讀中... (請稍候)");
-
-    try {
-        // 取得檔案連結
-        const fileLink = await bot.getFileLink(fileId);
-        
-        // 呼叫 Service (請確認 services.js 也有更新)
-        const summary = await services.processPDF(fileLink);
-
-        // 回傳結果
-        await bot.sendMessage(chatId, summary, { parse_mode: 'Markdown' });
-        await bot.sendMessage(chatId, "💡 **下一步**：如果您滿意這份摘要，請長按該訊息並 **「轉發 (Forward)」** 到 Gate-room，即會自動轉化為 FB 貼文！");
-
-    } catch (error) {
-        console.error(error);
-        await bot.sendMessage(chatId, "❌ 處理失敗，請稍後再試。");
-    }
-});
-
-// ==========================================
-// 🔔 Big 3: Gate-Room 監聽區
+// 🔔 Big 3: Gate-Room 監聽區 (無狀態核心)
 // ==========================================
 
 // 1. 監聽頻道貼文
 bot.on('channel_post', async (msg) => {
+    // 檢查是否為 Gate-Room
     if (gateChannelId && String(msg.chat.id) !== String(gateChannelId)) return;
     
     console.log(`[Gate] 收到新素材: ${msg.message_id}`);
     const rawText = msg.text || msg.caption || "";
     if (!rawText) return;
 
+    // 呼叫 Service 改寫
     const draft = await services.processGateMessage(rawText);
 
     if (draft) {
@@ -84,7 +52,7 @@ bot.on('channel_post', async (msg) => {
 
         const opts = {
             reply_to_message_id: msg.message_id,
-            // 暫時移除 parse_mode: 'Markdown' 以避免標題格式錯誤
+            parse_mode: 'Markdown',
             reply_markup: {
                 inline_keyboard: [
                     [
@@ -127,13 +95,14 @@ bot.on('callback_query', async (callbackQuery) => {
     await bot.editMessageText(`${content}\n\n✅ [已發射: ${target}]`, {
         chat_id: msg.chat.id,
         message_id: msg.message_id,
+        parse_mode: 'Markdown',
         reply_markup: { inline_keyboard: [] } 
     });
 });
 
 
 // ==========================================
-// ⏰ Big 2: 定時排程區 (維持您的原設定)
+// ⏰ Big 2: 定時排程區
 // ==========================================
 
 // 05:00 娛樂榜

@@ -1,7 +1,7 @@
 {
-  "name": "info-commander-big3",
-  "version": "1.2.26-final",
-  "description": "Info Commander Bot: Integrated Big 1 (PDF), Big 2 (Cron), and Big 3 (Gate-Room) Systems.",
+  "name": "info-commander-bot-1223",
+  "version": "1.2.25-01",
+  "description": "Telegram bot powered by Gemini 3 Flash (Ver 1223_07)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -9,12 +9,16 @@
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "axios": "^1.13.2",
+    "cheerio": "^1.0.0-rc.12",
     "dotenv": "^16.6.1",
     "express": "^4.22.1",
     "googleapis": "^169.0.0",
     "node-schedule": "^2.1.1",
     "node-telegram-bot-api": "^0.64.0",
-    "pdf-parse": "^1.1.1"
+    "pdf-parse": "^1.1.1",
+    "rss-parser": "^3.13.0",
+    "xml2js": "^0.6.2",
+    "youtubei.js": "^10.0.0"
   },
   "engines": {
     "node": "20.x"
