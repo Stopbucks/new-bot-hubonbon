@@ -10,7 +10,7 @@ require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const express = require('express');
 const schedule = require('node-schedule');
-const services = require('./services'); 
+const services = require('./services_backupbig31'); 
 
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 bot.on('polling_error', (e) => console.log(`[Polling Error] ${e.code}`));

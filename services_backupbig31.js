@@ -2,8 +2,8 @@
  * ==============================================================================
  * 🛠️ Info Commander Services
  * ==============================================================================
- * [Version]     1226_Web_Dashboard_Edition_V2
- * [Feature]     PDF / Web / Gate / Auto / RSS Monitor (With Anti-Bot Headers)
+ * [Version]     1226_Web_Dashboard_Edition
+ * [Feature]     PDF / Web / Gate / Auto / RSS Monitor
  * ==============================================================================
  */
 
@@ -14,20 +14,12 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const PdfParse = require('pdf-parse');
 const Parser = require('rss-parser');
 
-// ✅ 修改重點：加入偽裝表頭 (User-Agent) 欺騙 Google 我們是瀏覽器
-const parser = new Parser({
-    headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
-        'Accept': 'application/rss+xml, application/xml, text/xml; q=0.1'
-    },
-    timeout: 8000 // 設定 8 秒超時，避免卡太久
-});
-
+const parser = new Parser();
 const googleKey = process.env.GOOGLE_SEARCH_KEY || process.env.GOOGLE_CLOUD_API_KEY;
 const youtube = google.youtube({ version: 'v3', auth: googleKey });
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// 模型設定
+// ✅ 使用您指定的 gemini-3-flash-preview
 const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
 
 const getDateDaysAgo = (days) => {
@@ -146,7 +138,6 @@ async function fetchRSS(feedUrl, sourceName) {
     } catch (e) {
         // 分艙防水：單一來源失敗，回傳錯誤提示，不影響其他來源
         console.log(`[RSS Warning] ${sourceName} read failed: ${e.message}`);
-        // 回傳空陣列或錯誤訊息，讓前端顯示
         return [{ title: `⚠️ [${sourceName}] 讀取失敗 (可能連線逾時)`, link: '#', pubDate: new Date().toISOString() }];
     }
 }
