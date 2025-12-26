@@ -1,190 +1,203 @@
 /**
  * ==============================================================================
- * 🛠️ Info Commander Server (The Thin Controller)
+ * 🛠️ Info Commander Services (War Room Big 2 + Big 3 Integrated)
  * ==============================================================================
- * [Architecture] Big 2 (Cron) + Big 3 (Event Driven/Stateless)
- * [Version]      1226_Big3_Unified
+ * [Version]     Big 3 Bridge-Gate Edition (Full)
+ * [Last Update] 2025-12-26
+ * [Model]       gemini-3-flash-preview
  * ==============================================================================
  */
 
 require('dotenv').config();
-const TelegramBot = require('node-telegram-bot-api');
-const express = require('express');
-const schedule = require('node-schedule');
-const services = require('./services'); // 引入參謀本部
+const { google } = require('googleapis');
+const axios = require('axios');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-const token = process.env.TELEGRAM_TOKEN;
-const gateChannelId = process.env.GATE_CHANNEL_ID; // 必須設定
+// --- 初始化 ---
+const googleKey = process.env.GOOGLE_SEARCH_KEY || process.env.GOOGLE_CLOUD_API_KEY;
+const youtube = google.youtube({ version: 'v3', auth: googleKey });
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-if (!token) { console.error("❌ 缺少 TELEGRAM_TOKEN"); process.exit(1); }
+// ✅ 指定模型
+const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
 
-const bot = new TelegramBot(token, { polling: true });
-const app = express();
-const port = process.env.PORT || 10000;
-
-console.log("🚀 Commander System Online (Big 2 + Big 3 Integrated)");
-
-// 工具：延遲
-const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+// 工具：計算時間
+function getDateDaysAgo(days) {
+    const date = new Date();
+    date.setDate(date.getDate() - days);
+    return date.toISOString();
+}
 
 // ==========================================
-// 🔔 Big 3: Gate-Room 監聽區 (無狀態核心)
+// A. 智能搜圖路由 (Smart Image Router)
 // ==========================================
+async function fetchSmartImage(keyword, type) {
+    try {
+        console.log(`[Image Router] 請求: ${keyword} (Type: ${type})`);
 
-// 1. 監聽頻道貼文 (Channel Post)
-bot.on('channel_post', async (msg) => {
-    // 檢查是否為指定的 Gate-Room
-    if (gateChannelId && String(msg.chat.id) !== String(gateChannelId)) return;
-    
-    console.log(`[Gate] 收到新素材: ${msg.message_id}`);
-    
-    // 取得文字內容 (包含轉發的文字 或 連結)
-    const rawText = msg.text || msg.caption || "";
-    if (!rawText) return;
-
-    // 呼叫 Service 進行 Gemini 改寫
-    const draft = await services.processGateMessage(rawText);
-
-    if (draft) {
-        // 為了無狀態，我們將 ImageUrl 藏在文字最後 (或直接顯示)
-        // 這裡我們用一個技巧：把 ImageUrl 放在文字最後一行，並用特殊標記，方便之後提取
-        let finalContent = draft.content;
-        if (draft.imageUrl) {
-            finalContent += `\n\n🖼️ IMAGE_SRC: ${draft.imageUrl}`;
-        }
-
-        const opts = {
-            reply_to_message_id: msg.message_id,
-            parse_mode: 'Markdown',
-            reply_markup: {
-                inline_keyboard: [
-                    [
-                        { text: '🏀 體育版', callback_data: 'post_sports' },
-                        { text: '💰 財經版', callback_data: 'post_finance' }
-                    ],
-                    [{ text: '💾 存入庫存 (Big 4)', callback_data: 'save_vault' }]
-                ]
+        // 路線 A: Unsplash (意境/概念)
+        if (type === 'concept' && process.env.UNSPLASH_ACCESS_KEY) {
+            const unsplashUrl = `https://api.unsplash.com/search/photos?query=${encodeURIComponent(keyword)}&per_page=1&client_id=${process.env.UNSPLASH_ACCESS_KEY}`;
+            const res = await axios.get(unsplashUrl);
+            if (res.data.results && res.data.results.length > 0) {
+                return res.data.results[0].urls.regular;
             }
+        }
+        
+        // 路線 B: Google Custom Search (新聞/備援)
+        const googleUrl = `https://www.googleapis.com/customsearch/v1?q=${encodeURIComponent(keyword)}&cx=${process.env.SEARCH_ENGINE_ID}&key=${googleKey}&searchType=image&num=1`;
+        const res = await axios.get(googleUrl);
+        if (res.data.items && res.data.items.length > 0) {
+            return res.data.items[0].link;
+        }
+        
+        return null;
+    } catch (e) {
+        console.error(`[Image Error] ${e.message}`);
+        return null; 
+    }
+}
+
+// ==========================================
+// B. Gemini 核心分析 (Brain)
+// ==========================================
+
+// B-1. 綜合分析 (適用於每日議題/熱搜)
+async function generateAnalysisV2(ytData, newsData) {
+    const prompt = `
+    你是一個全球情報分析師。請針對以下素材進行分析：
+    【YouTube 標題】：${ytData.title}
+    【相關新聞】：${newsData}
+
+    請輸出一個 **純 JSON 格式** 的回應 (不要 Markdown)，包含：
+    1. "content": 一篇繁體中文社群貼文。
+       - 標題以 "  ▌ " 開頭。
+       - 倒金字塔風格，段落間空一行，語氣專業但易讀。
+       - 300字以內。
+       - 最後一段列出參考來源。
+    2. "image_decision": 一個物件 { "type": "news"或"concept", "keyword": "英文搜尋關鍵字" }。
+    `;
+
+    try {
+        const result = await model.generateContent(prompt);
+        let text = result.response.text().replace(/```json|```/g, '').trim();
+        return JSON.parse(text);
+    } catch (e) {
+        console.error("[Gemini Error]", e.message);
+        return { content: `⚠️ 分析失敗: ${ytData.title}`, image_decision: { type: "news", keyword: ytData.title } };
+    }
+}
+
+// B-2. Gate-Room 專用改寫 (Big 3 新增)
+async function processGateMessage(rawText, sourceUrl = "") {
+    console.log("[Gate-Room] Gemini 正在改寫...");
+    const prompt = `
+    你是一個社群小編。請將以下內容改寫為 Facebook 貼文：
+    【來源內容】：${rawText}
+    
+    請輸出 **純 JSON**：
+    1. "content": 貼文內容。
+       - 標題用 "  ▌ " 開頭。
+       - 加上適當 Emoji 與 Hashtag。
+       - 若有來源網址，請放在最後一行。
+    2. "image_decision": { "type": "news"或"concept", "keyword": "英文關鍵字" }
+    `;
+
+    try {
+        const result = await model.generateContent(prompt);
+        let text = result.response.text().replace(/```json|```/g, '').trim();
+        const json = JSON.parse(text);
+
+        // 自動配圖
+        const imageUrl = await fetchSmartImage(json.image_decision.keyword, json.image_decision.type);
+        
+        return {
+            content: json.content,
+            imageUrl: imageUrl, 
+            sourceUrl: sourceUrl
         };
-
-        // 回覆草稿
-        await bot.sendMessage(msg.chat.id, finalContent, opts);
+    } catch (e) {
+        console.error("[Gate Error]", e.message);
+        return null;
     }
-});
-
-// 2. 監聽按鈕點擊 (Callback Query)
-bot.on('callback_query', async (callbackQuery) => {
-    const msg = callbackQuery.message;
-    const target = callbackQuery.data;
-    const chatId = msg.chat.id;
-
-    // 停止按鈕轉圈圈
-    await bot.answerCallbackQuery(callbackQuery.id, { text: '🚀 發射程序啟動...' });
-
-    // 從訊息中提取內容與圖片 (Stateless!)
-    let content = msg.text;
-    let imageUrl = '';
-    
-    // 解析我們剛剛藏的圖片標記
-    const imgMatch = content.match(/🖼️ IMAGE_SRC: (.*)/);
-    if (imgMatch) {
-        imageUrl = imgMatch[1];
-        content = content.replace(imgMatch[0], '').trim(); // 移除標記，不發布出去
-    }
-
-    // 準備 Payload
-    const payload = {
-        target: target,
-        content: content,
-        imageUrl: imageUrl,
-        timestamp: new Date().toISOString()
-    };
-
-    // 呼叫 Service 發送
-    await services.dispatchToMake(payload);
-
-    // 修改原訊息，標記為已發送
-    await bot.editMessageText(`${content}\n\n✅ [已發射: ${target}]`, {
-        chat_id: chatId,
-        message_id: msg.message_id,
-        parse_mode: 'Markdown',
-        reply_markup: { inline_keyboard: [] } // 移除按鈕
-    });
-});
-
+}
 
 // ==========================================
-// ⏰ Big 2: 定時排程區
+// C. 外部數據源 (YouTube / RSS)
 // ==========================================
+async function searchYouTube(keyword, days = 5) {
+    try {
+        const res = await youtube.search.list({
+            part: 'snippet', q: keyword, order: 'viewCount', type: 'video',
+            relevanceLanguage: 'zh-Hant', publishedAfter: getDateDaysAgo(days), maxResults: 1
+        });
+        if (!res.data.items?.length) return null;
+        const v = res.data.items[0];
+        return { title: v.snippet.title, description: v.snippet.description, url: `https://www.youtube.com/watch?v=${v.id.videoId}` };
+    } catch (e) { return null; }
+}
 
-// 05:00 娛樂榜 (簡化版)
-schedule.scheduleJob('0 21 * * *', async function(){
-    console.log('⏰ [05:00 Job] Top Videos');
-    const regions = ['TW', 'US', 'JP'];
-    let report = "🔥 **YouTube 昨日發燒**\n";
-    for (const r of regions) {
-        const vids = await services.getMostPopularVideos(r);
-        report += `\n[${r}]\n` + vids.map(v => `• [${v.title}](${v.url})`).join('\n');
-    }
-    if(process.env.MY_CHAT_ID) bot.sendMessage(process.env.MY_CHAT_ID, report, { parse_mode: 'Markdown' });
-});
+async function getMostPopularVideos(regionCode) {
+    try {
+        const res = await youtube.videos.list({ part: 'snippet', chart: 'mostPopular', regionCode: regionCode, maxResults: 3 });
+        return res.data.items.map(v => ({ title: v.snippet.title, url: `https://www.youtube.com/watch?v=${v.id}` }));
+    } catch (e) { return []; }
+}
 
-// 05:10 頻道監控 (邏輯移至 Service，這裡只負責跑迴圈)
-schedule.scheduleJob('10 21 * * *', async function(){
-    const channels = (process.env.MONITOR_CHANNELS || '').split(',');
-    console.log(`⏰ [05:10 Job] Monitor ${channels.length}`);
-    
-    for (const chId of channels) {
-        if(!chId) continue;
-        const newVids = await services.checkChannelLatestVideo(chId.trim());
-        if (newVids.length > 0) {
-            console.log(`[Monitor] ${chId} Found ${newVids.length}`);
-            for (const v of newVids) {
-                // 這裡可以選擇直接發給 Gate-room (如果想自動化的話)
-                // 目前先照舊發給您個人
-                if(process.env.MY_CHAT_ID) {
-                   await bot.sendMessage(process.env.MY_CHAT_ID, `🚨 **大神發片**\n${v.title}\n${v.url}`);
-                }
-            }
+async function checkChannelLatestVideo(channelId) {
+    try {
+        const res = await youtube.search.list({
+            part: 'snippet', channelId: channelId, order: 'date', type: 'video',
+            publishedAfter: getDateDaysAgo(1), maxResults: 3
+        });
+        if (!res.data.items?.length) return [];
+        return res.data.items.map(v => ({
+            title: v.snippet.title,
+            description: v.snippet.description,
+            url: `https://www.youtube.com/watch?v=${v.id.videoId}`
+        }));
+    } catch (e) { console.error(`Monitor Error ${channelId}: ${e.message}`); return []; }
+}
+
+async function searchGoogle(query) {
+    try {
+        const res = await axios.get('https://www.googleapis.com/customsearch/v1', {
+            params: { key: googleKey, cx: process.env.SEARCH_ENGINE_ID, q: query, num: 3 }
+        });
+        return res.data.items ? res.data.items.map(i => `${i.title}: ${i.snippet}`).join('\n') : "";
+    } catch (e) { return ""; }
+}
+
+async function getGlobalTrends(geo = 'TW') {
+    try {
+        const rssUrl = `https://trends.google.com/trends/trendingsearches/daily/rss?geo=${geo}`;
+        const res = await axios.get(rssUrl);
+        const items = [];
+        const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+        const titleRegex = /<title>(.*?)<\/title>/;
+        let match;
+        while ((match = itemRegex.exec(res.data)) !== null) {
+            const titleMatch = titleRegex.exec(match[1]);
+            if (titleMatch) items.push({ title: titleMatch[1].replace(/<!\[CDATA\[|\]\]>/g, ''), source: 'RSS' });
         }
-        await delay(180000); // 休息 3 分鐘
-    }
-});
+        return items.slice(0, 10);
+    } catch (e) { console.error("RSS Error:", e.message); return []; }
+}
 
-// 06:00 全球熱搜 (修復版)
-schedule.scheduleJob('0 22 * * *', async function(){
-    console.log('⏰ [06:00 Job] RSS Trends');
-    const trends = await services.getGlobalTrends('TW'); // 呼叫 Services
-    let msg = "🌎 **Google TW 熱搜**\n";
-    trends.forEach((t, i) => msg += `${i+1}. ${t.title}\n`);
-    if(process.env.MY_CHAT_ID) bot.sendMessage(process.env.MY_CHAT_ID, msg);
-});
+// ==========================================
+// D. Make 自動化發送
+// ==========================================
+async function dispatchToMake(payload) {
+    if (!process.env.MAKE_WEBHOOK_URL) return;
+    try {
+        console.log(`[Make] 發送 Payload: ${payload.target}`);
+        await axios.post(process.env.MAKE_WEBHOOK_URL, payload);
+    } catch (e) { console.error(`[Make Error] ${e.message}`); }
+}
 
-// 08:00 每日議題
-schedule.scheduleJob('0 0 * * *', async function(){
-    const topics = (process.env.DAILY_TOPIC || '').split(',');
-    for (const topic of topics) {
-        if(!topic) continue;
-        console.log(`⏰ [Daily] ${topic}`);
-        // 完整流程都在 Service 裡，這裡只要組裝
-        const yt = await services.searchYouTube(topic);
-        if(yt) {
-            const news = await services.searchGoogle(yt.title);
-            const analysis = await services.generateAnalysisV2(yt, news);
-            const img = await services.fetchSmartImage(analysis.image_decision.keyword, analysis.image_decision.type);
-            
-            // 發給個人檢查，或者直接發 Make
-            // 這裡示範直接發 Make (全自動)
-            await services.dispatchToMake({
-                target: 'auto_daily',
-                content: analysis.content,
-                imageUrl: img || ''
-            });
-        }
-        await delay(600000); // 休息 10 分鐘
-    }
-});
-
-// Web Server Keep-Alive
-app.get('/', (req, res) => res.send('Info Commander Big 3 Online'));
-app.listen(port, () => console.log(`Server running on port ${port}`));
+// 匯出所有功能
+module.exports = {
+    searchYouTube, getMostPopularVideos, checkChannelLatestVideo,
+    searchGoogle, getGlobalTrends,
+    generateAnalysisV2, processGateMessage, fetchSmartImage, dispatchToMake
+};
