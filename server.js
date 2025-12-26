@@ -1,9 +1,9 @@
 /**
  * ==============================================================================
- * 🛠️ Info Commander Server (The Controller)
+ * 🛠️ Info Commander Server
  * ==============================================================================
- * [Architecture] Big 1 (PDF) + Big 2 (Cron) + Big 3 (Gate)
- * [Version]      1226_Safe_Integration
+ * [Architecture] Big 1(PDF/Web) + Big 2(Auto) + Big 3(Gate)
+ * [Principle]    Simple & Easy to Maintain
  * ==============================================================================
  */
 
@@ -11,192 +11,111 @@ require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const express = require('express');
 const schedule = require('node-schedule');
-const services = require('./services'); // 引入參謀本部
+const services = require('./services'); 
 
-const token = process.env.TELEGRAM_TOKEN;
-const gateChannelId = process.env.GATE_CHANNEL_ID;
-
-if (!token) { console.error("❌ 缺少 TELEGRAM_TOKEN"); process.exit(1); }
-
-const bot = new TelegramBot(token, { polling: true });
-// 增加錯誤處理，防止 Polling 衝突
-bot.on('polling_error', (error) => console.log(`[Polling Error] ${error.code}`));
-
+const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
+bot.on('polling_error', (e) => console.log(`[Polling Error] ${e.code}`));
 const app = express();
 const port = process.env.PORT || 10000;
-
-console.log("🚀 Commander System Online (Big 1 + Big 2 + Big 3)");
-
-// 工具：延遲
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-// ==========================================
-// 🔔 Big 1: Bridge-room (PDF 讀取) - ✅ 這是新增的區塊
-// ==========================================
+console.log("🚀 Commander System Online (Streamlined Version)");
+
+// === Big 1: Bridge-room (主動閱讀) ===
+// A. 讀連結 (暴力法，不處理 YouTube)
+bot.on('message', async (msg) => {
+    if (msg.chat.type !== 'private' || msg.document || !msg.text?.startsWith('http')) return;
+    
+    // 如果是指揮官手動貼 YouTube，就直接忽略 (或回傳: 請貼標題至 Gate)
+    if (msg.text.includes('youtube.com') || msg.text.includes('youtu.be')) return;
+
+    await bot.sendMessage(msg.chat.id, "🔍 讀取網頁中...");
+    const summary = await services.processUrl(msg.text);
+    await bot.sendMessage(msg.chat.id, `📰 **摘要**\n\n${summary}`, { parse_mode: 'Markdown' });
+});
+
+// B. 讀 PDF
 bot.on('document', async (msg) => {
-    // 1. 安全檢查：只允許私聊 (Private)
-    if (msg.chat.type !== 'private') return;
-
-    // 2. 檢查是否為 PDF
-    const mime = msg.document.mime_type;
-    if (!mime || !mime.includes('pdf')) return;
-
-    const chatId = msg.chat.id;
-    const fileId = msg.document.file_id;
-
-    console.log(`[Bridge] 收到 PDF: ${msg.document.file_name}`);
-    await bot.sendMessage(chatId, "📄 收到 PDF，Gemini 正在速讀中... (請稍候)");
-
-    try {
-        // 取得檔案連結
-        const fileLink = await bot.getFileLink(fileId);
-        
-        // 呼叫 Service (請確認 services.js 也有更新)
-        const summary = await services.processPDF(fileLink);
-
-        // 回傳結果
-        await bot.sendMessage(chatId, summary, { parse_mode: 'Markdown' });
-        await bot.sendMessage(chatId, "💡 **下一步**：如果您滿意這份摘要，請長按該訊息並 **「轉發 (Forward)」** 到 Gate-room，即會自動轉化為 FB 貼文！");
-
-    } catch (error) {
-        console.error(error);
-        await bot.sendMessage(chatId, "❌ 處理失敗，請稍後再試。");
+    if (msg.chat.type === 'private' && msg.document.mime_type?.includes('pdf')) {
+        await bot.sendMessage(msg.chat.id, "📄 讀取 PDF 中...");
+        try {
+            const link = await bot.getFileLink(msg.document.file_id);
+            const summary = await services.processPDF(link);
+            await bot.sendMessage(msg.chat.id, summary, { parse_mode: 'Markdown' });
+        } catch (e) { await bot.sendMessage(msg.chat.id, "❌ 失敗"); }
     }
 });
 
-// ==========================================
-// 🔔 Big 3: Gate-Room 監聽區
-// ==========================================
-
-// 1. 監聽頻道貼文
+// === Big 3: Gate-Room (社群發布) ===
 bot.on('channel_post', async (msg) => {
-    if (gateChannelId && String(msg.chat.id) !== String(gateChannelId)) return;
-    
-    console.log(`[Gate] 收到新素材: ${msg.message_id}`);
-    const rawText = msg.text || msg.caption || "";
+    if (process.env.GATE_CHANNEL_ID && String(msg.chat.id) !== String(process.env.GATE_CHANNEL_ID)) return;
+    const rawText = msg.text || msg.caption;
     if (!rawText) return;
 
     const draft = await services.processGateMessage(rawText);
-
     if (draft) {
-        let finalContent = draft.content;
-        if (draft.imageUrl) finalContent += `\n\n🖼️ IMAGE_SRC: ${draft.imageUrl}`;
-
-        const opts = {
+        let content = draft.content;
+        if (draft.imageUrl) content += `\n\n🖼️ IMAGE_SRC: ${draft.imageUrl}`;
+        await bot.sendMessage(msg.chat.id, content, {
             reply_to_message_id: msg.message_id,
-            // 暫時移除 parse_mode: 'Markdown' 以避免標題格式錯誤
             reply_markup: {
                 inline_keyboard: [
-                    [
-                        { text: '🏀 體育版', callback_data: 'post_sports' },
-                        { text: '💰 財經版', callback_data: 'post_finance' }
-                    ],
-                    [{ text: '💾 存入庫存 (Big 4)', callback_data: 'save_vault' }]
+                    [{ text: '🏀 體育版', callback_data: 'post_sports' }, { text: '💰 財經版', callback_data: 'post_finance' }],
+                    [{ text: '💾 存入庫存', callback_data: 'save_vault' }]
                 ]
             }
-        };
-        await bot.sendMessage(msg.chat.id, finalContent, opts);
+        });
     }
 });
 
-// 2. 監聽按鈕點擊
-bot.on('callback_query', async (callbackQuery) => {
-    const msg = callbackQuery.message;
-    const target = callbackQuery.data;
-
-    await bot.answerCallbackQuery(callbackQuery.id, { text: '🚀 發射程序啟動...' });
-
-    let content = msg.text;
+bot.on('callback_query', async (q) => {
+    await bot.answerCallbackQuery(q.id, { text: '🚀 發射!' });
+    let content = q.message.text;
     let imageUrl = '';
+    const match = content.match(/🖼️ IMAGE_SRC: (.*)/);
+    if (match) { imageUrl = match[1]; content = content.replace(match[0], '').trim(); }
     
-    const imgMatch = content.match(/🖼️ IMAGE_SRC: (.*)/);
-    if (imgMatch) {
-        imageUrl = imgMatch[1];
-        content = content.replace(imgMatch[0], '').trim(); 
-    }
-
-    const payload = {
-        target: target,
-        content: content,
-        imageUrl: imageUrl,
-        timestamp: new Date().toISOString()
-    };
-
-    await services.dispatchToMake(payload);
-
-    await bot.editMessageText(`${content}\n\n✅ [已發射: ${target}]`, {
-        chat_id: msg.chat.id,
-        message_id: msg.message_id,
-        reply_markup: { inline_keyboard: [] } 
-    });
+    await services.dispatchToMake({ target: q.data, content, imageUrl, timestamp: new Date().toISOString() });
+    await bot.editMessageText(`${content}\n\n✅ [已發射]`, { chat_id: q.message.chat.id, message_id: q.message.message_id, reply_markup: { inline_keyboard: [] } });
 });
 
-
-// ==========================================
-// ⏰ Big 2: 定時排程區 (維持您的原設定)
-// ==========================================
-
-// 05:00 娛樂榜
-schedule.scheduleJob('0 21 * * *', async function(){
-    console.log('⏰ [05:00 Job] Top Videos');
-    const regions = ['TW', 'US', 'JP'];
-    let report = "🔥 **YouTube 昨日發燒**\n";
-    for (const r of regions) {
-        const vids = await services.getMostPopularVideos(r);
-        report += `\n[${r}]\n` + vids.map(v => `• [${v.title}](${v.url})`).join('\n');
-    }
-    if(process.env.MY_CHAT_ID) bot.sendMessage(process.env.MY_CHAT_ID, report, { parse_mode: 'Markdown' });
+// === Big 2: 自動化排程 (每日早晨) ===
+schedule.scheduleJob('0 21 * * *', async () => { // 05:00
+    if(!process.env.MY_CHAT_ID) return;
+    const vids = await services.getMostPopularVideos('TW');
+    bot.sendMessage(process.env.MY_CHAT_ID, "🔥 **YouTube 熱門**\n" + vids.map(v => `• [${v.title}](${v.url})`).join('\n'), {parse_mode:'Markdown'});
 });
 
-// 05:10 頻道監控
-schedule.scheduleJob('10 21 * * *', async function(){
+schedule.scheduleJob('10 21 * * *', async () => { // 05:10
     const channels = (process.env.MONITOR_CHANNELS || '').split(',');
-    console.log(`⏰ [05:10 Job] Monitor ${channels.length}`);
-    for (const chId of channels) {
-        if(!chId) continue;
-        const newVids = await services.checkChannelLatestVideo(chId.trim());
-        if (newVids.length > 0) {
-            console.log(`[Monitor] ${chId} Found ${newVids.length}`);
-            for (const v of newVids) {
-                if(process.env.MY_CHAT_ID) {
-                   await bot.sendMessage(process.env.MY_CHAT_ID, `🚨 **大神發片**\n${v.title}\n${v.url}`);
-                }
-            }
-        }
-        await delay(180000); 
+    for (const ch of channels) {
+        if(!ch) continue;
+        const vids = await services.checkChannelLatestVideo(ch.trim());
+        for (const v of vids) bot.sendMessage(process.env.MY_CHAT_ID, `🚨 **大神發片**\n${v.title}\n${v.url}`);
+        await delay(5000);
     }
 });
 
-// 06:00 全球熱搜
-schedule.scheduleJob('0 22 * * *', async function(){
-    console.log('⏰ [06:00 Job] RSS Trends');
-    const trends = await services.getGlobalTrends('TW'); 
-    let msg = "🌎 **Google TW 熱搜**\n";
-    trends.forEach((t, i) => msg += `${i+1}. ${t.title}\n`);
-    if(process.env.MY_CHAT_ID) bot.sendMessage(process.env.MY_CHAT_ID, msg);
+schedule.scheduleJob('0 22 * * *', async () => { // 06:00
+    if(!process.env.MY_CHAT_ID) return;
+    const trends = await services.getGlobalTrends('TW');
+    bot.sendMessage(process.env.MY_CHAT_ID, "🌎 **Google 熱搜**\n" + trends.map((t,i)=>`${i+1}. ${t.title}`).join('\n'));
 });
 
-// 08:00 每日議題
-schedule.scheduleJob('0 0 * * *', async function(){
+schedule.scheduleJob('30 21 * * *', async () => { // 05:30
     const topics = (process.env.DAILY_TOPIC || '').split(',');
-    for (const topic of topics) {
-        if(!topic) continue;
-        console.log(`⏰ [Daily] ${topic}`);
-        const yt = await services.searchYouTube(topic);
+    for (const t of topics) {
+        if(!t) continue;
+        const yt = await services.searchYouTube(t);
         if(yt) {
             const news = await services.searchGoogle(yt.title);
             const analysis = await services.generateAnalysisV2(yt, news);
-            const img = await services.fetchSmartImage(analysis.image_decision.keyword, analysis.image_decision.type);
-            await services.dispatchToMake({
-                target: 'auto_daily',
-                content: analysis.content,
-                imageUrl: img || ''
-            });
+            const img = await services.fetchSmartImage(analysis.image_decision.keyword, 'news');
+            await services.dispatchToMake({ target: 'auto_daily', content: analysis.content, imageUrl: img || '' });
         }
-        await delay(600000); 
+        await delay(10000);
     }
 });
 
-// Web Server Keep-Alive
-app.get('/', (req, res) => res.send('Info Commander Big 3 Online'));
+app.get('/', (req, res) => res.send('Info Commander Lite Online'));
 app.listen(port, () => console.log(`Server running on port ${port}`));
