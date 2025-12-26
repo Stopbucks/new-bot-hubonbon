@@ -10,7 +10,7 @@ require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const express = require('express');
 const schedule = require('node-schedule');
-const services = require('./services_backupbig31'); 
+const services = require('./services'); 
 
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 bot.on('polling_error', (e) => console.log(`[Polling Error] ${e.code}`));
@@ -120,23 +120,19 @@ schedule.scheduleJob('30 21 * * *', async () => {
 
 // 1. 取得 RSS 列表
 app.post('/api/rss', async (req, res) => {
-    // 👇👇👇 這裡就是您指定的 10 個 RSS 來源 👇👇👇
+    // 👇👇👇 優化版清單：移除 Google，加入 ABC Australia 👇👇👇
     const rssSources = [
-        // 1. 🌏 全球熱搜
-        { name: 'Google-TW', url: 'https://trends.google.com/trends/trendingsearches/daily/rss?geo=TW' },
-        { name: 'Google-US', url: 'https://trends.google.com/trends/trendingsearches/daily/rss?geo=US' },
-        { name: 'Google-UK', url: 'https://trends.google.com/trends/trendingsearches/daily/rss?geo=GB' },
-        { name: 'Google-AU', url: 'https://trends.google.com/trends/trendingsearches/daily/rss?geo=AU' },
-
-        // 2. 📰 綜合頭條
+        // 1. 📰 綜合頭條 (權威媒體)
         { name: 'NYTimes', url: 'https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml' },
         { name: 'BBC', url: 'http://feeds.bbci.co.uk/news/rss.xml' },
         { name: 'Guardian', url: 'https://www.theguardian.com/world/rss' },
+        // 🇦🇺 新增：澳洲廣播公司 (Just In / Top Stories)
+        { name: 'ABC-AU', url: 'https://www.abc.net.au/news/feed/2942460/rss.xml' },
 
-        // 3. 💰 財經與商業
+        // 2. 💰 財經與商業
         { name: 'WSJ', url: 'https://feeds.a.dj.com/rss/WSJcomUSBusiness.xml' },
 
-        // 4. 🚀 科技與新創
+        // 3. 🚀 科技與新創
         { name: 'TechCrunch', url: 'https://techcrunch.com/feed/' },
         { name: 'Wired', url: 'https://www.wired.com/feed/rss' }
     ];
