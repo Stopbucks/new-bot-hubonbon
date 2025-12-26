@@ -2,8 +2,8 @@
  * ==============================================================================
  * 🛠️ Info Commander Services
  * ==============================================================================
- * [Version]     1226_Web_Dashboard_Edition
- * [Feature]     PDF / Web / Gate / Auto / RSS Monitor
+ * [Version]     1226_Simple_Principle
+ * [Feature]     PDF / Web(Violent) / Gate / Auto-Schedule
  * ==============================================================================
  */
 
@@ -11,15 +11,11 @@ require('dotenv').config();
 const { google } = require('googleapis');
 const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const PdfParse = require('pdf-parse');
-const Parser = require('rss-parser');
+const PdfParse = require('pdf-parse'); 
 
-const parser = new Parser();
 const googleKey = process.env.GOOGLE_SEARCH_KEY || process.env.GOOGLE_CLOUD_API_KEY;
 const youtube = google.youtube({ version: 'v3', auth: googleKey });
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
-// ✅ 使用您指定的 gemini-3-flash-preview
 const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
 
 const getDateDaysAgo = (days) => {
@@ -43,12 +39,12 @@ async function fetchSmartImage(keyword, type) {
 }
 
 // B. 讀取能力 (PDF & Web)
-async function processUrl(url) { 
+async function processUrl(url) { // 暴力直讀
     try {
         console.log(`[Service] Reading: ${url}`);
         const res = await axios.get(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-        const rawHtml = res.data.substring(0, 40000); 
-        const result = await model.generateContent(`請忽略HTML標籤，摘要這篇網頁文章(繁體中文)，若是新聞請抓出重點：\n${rawHtml}`);
+        const rawHtml = res.data.substring(0, 40000); // 取前4萬字
+        const result = await model.generateContent(`請忽略HTML標籤，摘要這篇網頁文章(繁體中文)：\n${rawHtml}`);
         return result.response.text();
     } catch (e) { return "⚠️ 無法讀取網頁 (可能被阻擋)。"; }
 }
@@ -69,13 +65,12 @@ async function processGateMessage(rawText) {
     try {
         const result = await model.generateContent(`
         改寫為 FB 貼文 (純JSON):
-        {"content": "含標題( ▌ ), Emoji, Hashtag, 150字內, 語氣吸睛", "image_decision": {"type":"news/concept", "keyword":"en_keyword"}}
+        {"content": "含標題( ▌ ), Emoji, Hashtag, 150字內", "image_decision": {"type":"news/concept", "keyword":"en_keyword"}}
         \n內容: ${rawText}`);
-        let jsonStr = result.response.text().replace(/```json|```/g, '').trim();
-        const json = JSON.parse(jsonStr);
+        const json = JSON.parse(result.response.text().replace(/```json|```/g, '').trim());
         const img = await fetchSmartImage(json.image_decision.keyword, json.image_decision.type);
         return { content: json.content, imageUrl: img };
-    } catch (e) { return { content: "⚠️ AI 生成失敗，請重試", imageUrl: "" }; }
+    } catch (e) { return null; }
 }
 
 // D. 自動化分析 (早晨用)
@@ -125,32 +120,8 @@ async function dispatchToMake(payload) {
     if (process.env.MAKE_WEBHOOK_URL) await axios.post(process.env.MAKE_WEBHOOK_URL, payload).catch(e=>{});
 }
 
-// F. RSS 讀取 (Dashboard 用)
-async function fetchRSS(feedUrl, sourceName) {
-    try {
-        const feed = await parser.parseURL(feedUrl);
-        // 只回傳前 5 筆，標題加上來源
-        return feed.items.slice(0, 5).map(item => ({
-            title: `[${sourceName}] ${item.title}`,
-            link: item.link,
-            pubDate: item.pubDate
-        }));
-    } catch (e) {
-        // 分艙防水：單一來源失敗，回傳錯誤提示，不影響其他來源
-        console.log(`[RSS Warning] ${sourceName} read failed: ${e.message}`);
-        return [{ title: `⚠️ [${sourceName}] 讀取失敗 (可能連線逾時)`, link: '#', pubDate: new Date().toISOString() }];
-    }
-}
-
-async function fetchAllRSS(rssList) {
-    const promises = rssList.map(rss => fetchRSS(rss.url, rss.name));
-    const results = await Promise.all(promises);
-    return results.flat(); 
-}
-
 module.exports = {
     processGateMessage, processPDF, processUrl, generateAnalysisV2,
     searchYouTube, searchGoogle, getGlobalTrends, getMostPopularVideos, checkChannelLatestVideo,
-    fetchSmartImage, dispatchToMake,
-    fetchRSS, fetchAllRSS
+    fetchSmartImage, dispatchToMake
 };

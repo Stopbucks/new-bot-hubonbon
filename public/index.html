@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Info Commander Console</title>
+    <style>
+        :root { --bg: #1e1e1e; --panel: #252526; --text: #d4d4d4; --accent: #0e639c; --border: #3c3c3c; --hover: #2a2d2e; }
+        body { margin: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: var(--bg); color: var(--text); display: flex; height: 100vh; overflow: hidden; }
+        
+        /* 左側：RSS 列表 */
+        #sidebar { width: 350px; background: var(--panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; }
+        .sidebar-header { padding: 10px 15px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: #333333; }
+        .sidebar-content { flex: 1; overflow-y: auto; padding: 5px; }
+        
+        .rss-item { padding: 12px; border-bottom: 1px solid #333; cursor: pointer; transition: 0.2s; font-size: 14px; line-height: 1.4; border-radius: 4px; }
+        .rss-item:hover { background: var(--hover); border-left: 3px solid var(--accent); }
+        .rss-source { font-weight: bold; color: #4fc1ff; margin-bottom: 4px; display: block; font-size: 12px; }
+        .rss-date { font-size: 11px; color: #666; display: block; margin-top: 4px; }
+
+        /* 右側：工作區 */
+        #main { flex: 1; padding: 20px; display: flex; flex-direction: column; gap: 15px; background: var(--bg); }
+        h2 { margin: 0; font-size: 18px; color: #fff; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+        
+        /* 控制項 */
+        .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        button { background: var(--accent); color: white; border: none; padding: 8px 16px; cursor: pointer; border-radius: 3px; font-size: 13px; transition: 0.2s; }
+        button:hover { opacity: 0.9; transform: translateY(-1px); }
+        button:active { transform: translateY(0); }
+        button.secondary { background: #3c3c3c; }
+        button.publish-finance { background: #2da042; } /* Github Green */
+        button.publish-sports { background: #ce9178; }  /* VSCode Orange */
+        
+        /* 編輯區 */
+        .editor-container { flex: 1; display: flex; flex-direction: column; position: relative; }
+        textarea { flex: 1; background: #1e1e1e; border: 1px solid var(--border); color: #d4d4d4; padding: 15px; font-family: Consolas, 'Courier New', monospace; font-size: 15px; resize: none; outline: none; line-height: 1.6; border-radius: 4px; }
+        textarea:focus { border-color: var(--accent); }
+
+        /* 狀態列 */
+        #status { font-size: 12px; color: #888; margin-top: 5px; height: 20px; display: flex; align-items: center; }
+        .status-loading { color: #dcdcaa; }
+        .status-success { color: #6a9955; }
+        .status-error { color: #f48771; }
+    </style>
+</head>
+<body>
+
+    <div id="sidebar">
+        <div class="sidebar-header">
+            <span style="font-weight:bold; color: #fff;">📡 RSS Monitor</span>
+            <button class="secondary" onclick="loadRSS()" style="padding:4px 10px; font-size:12px;">Refresh</button>
+        </div>
+        <div id="rss-list" class="sidebar-content">
+            <div style="padding:20px; text-align:center; color:#666;">點擊 Refresh 載入新聞</div>
+        </div>
+    </div>
+
+    <div id="main">
+        <div>
+            <h2>📝 Gate Draft Room</h2>
+            <div class="controls" style="margin-top: 15px;">
+                <button class="secondary" onclick="analyzeUrl()">🔍 分析網址 (AI)</button>
+                <button class="secondary" onclick="generateDraft()">✨ 生成貼文 (AI)</button>
+                <span style="flex:1"></span>
+                <button class="publish-finance" onclick="publish('post_finance')">💰 發布財經</button>
+                <button class="publish-sports" onclick="publish('post_sports')">🏀 發布體育</button>
+            </div>
+        </div>
+        
+        <div class="editor-container">
+            <textarea id="editor" placeholder="在此貼上網址，或直接開始撰寫...&#10;若點擊左側新聞，網址會自動帶入。"></textarea>
+        </div>
+        <div id="status">System Ready.</div>
+    </div>
+
+    <script>
+        const editor = document.getElementById('editor');
+        const status = document.getElementById('status');
+        const rssList = document.getElementById('rss-list');
+
+        function log(msg, type='') { 
+            status.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`; 
+            status.className = type ? `status-${type}` : '';
+        }
+
+        // 1. 載入 RSS
+        async function loadRSS() {
+            log('正在輪詢 RSS 來源...', 'loading');
+            rssList.innerHTML = '<div style="padding:20px; text-align:center; color:#888;">載入中...</div>';
+            try {
+                const res = await fetch('/api/rss', { method: 'POST' });
+                const items = await res.json();
+                
+                rssList.innerHTML = '';
+                if(items.length === 0) {
+                    rssList.innerHTML = '<div style="padding:20px; text-align:center;">無資料</div>';
+                    return;
+                }
+
+                items.forEach(item => {
+                    const div = document.createElement('div');
+                    div.className = 'rss-item';
+                    const dateStr = item.pubDate ? new Date(item.pubDate).toLocaleString('zh-TW', {month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit'}) : '';
+                    
+                    div.innerHTML = `
+                        <span class="rss-source">${item.title.split(']')[0]}]</span>
+                        <span>${item.title.split(']').slice(1).join(']')}</span>
+                        <span class="rss-date">${dateStr}</span>
+                    `;
+                    div.onclick = () => {
+                        editor.value = item.link;
+                        log(`已選取: ${item.title.substring(0, 20)}...`);
+                    };
+                    rssList.appendChild(div);
+                });
+                log(`RSS 更新完成，共 ${items.length} 則快訊`, 'success');
+            } catch (e) { log('RSS 讀取失敗，請檢查 Server Log', 'error'); }
+        }
+
+        // 2. 分析網址
+        async function analyzeUrl() {
+            const url = editor.value.trim();
+            if(!url.startsWith('http')) return alert('請先貼上有效網址');
+            log('AI 正在閱讀網頁並進行摘要...', 'loading');
+            try {
+                const res = await fetch('/api/summarize', { 
+                    method: 'POST', 
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ url })
+                });
+                const data = await res.json();
+                editor.value = data.summary;
+                log('摘要完成，請檢視內容', 'success');
+            } catch (e) { log('分析失敗', 'error'); }
+        }
+
+        // 3. 生成草稿
+        async function generateDraft() {
+            const text = editor.value;
+            if(!text) return alert('編輯區無內容');
+            log('AI 正在改寫為 FB 風格 (Gate)...', 'loading');
+            try {
+                const res = await fetch('/api/gate-draft', { 
+                    method: 'POST', 
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ text })
+                });
+                const data = await res.json();
+                editor.value = `${data.content}\n\n🖼️ IMAGE_SRC: ${data.imageUrl}`;
+                log('草稿生成完畢', 'success');
+            } catch (e) { log('生成失敗', 'error'); }
+        }
+
+        // 4. 發布
+        async function publish(target) {
+            const raw = editor.value;
+            if(!raw) return;
+            if(!confirm(`確認要發布到 [${target}] ?`)) return;
+            
+            let content = raw;
+            let imageUrl = '';
+            const match = raw.match(/🖼️ IMAGE_SRC: (.*)/);
+            if (match) { imageUrl = match[1]; content = raw.replace(match[0], '').trim(); }
+
+            log('正在傳送至 Make...', 'loading');
+            try {
+                await fetch('/api/publish', {
+                    method: 'POST', 
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ target, content, imageUrl, timestamp: new Date().toISOString() })
+                });
+                log('🚀 已成功發射訊號!', 'success');
+                editor.value = ''; // 清空
+            } catch (e) { log('發送失敗', 'error'); }
+        }
+        
+        // 啟動時自動載入
+        loadRSS();
+    </script>
+</body>
+</html>

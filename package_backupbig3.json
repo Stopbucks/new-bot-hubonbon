@@ -1,7 +1,7 @@
 {
   "name": "info-commander-lite",
-  "version": "1.3.0-web-dashboard",
-  "description": "Info Commander Bot: PDF/Web/Gate/Auto + Web Dashboard",
+  "version": "1.3.0-simple",
+  "description": "Info Commander Bot: PDF/Web/Gate/Auto (Streamlined Version)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -14,8 +14,7 @@
     "googleapis": "^169.0.0",
     "node-schedule": "^2.1.1",
     "node-telegram-bot-api": "^0.64.0",
-    "pdf-parse": "^1.1.1",
-    "rss-parser": "^3.13.0"
+    "pdf-parse": "^1.1.1"
   },
   "engines": {
     "node": "20.x"

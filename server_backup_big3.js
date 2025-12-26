@@ -1,8 +1,9 @@
 /**
  * ==============================================================================
- * 🛠️ Info Commander Server (Web Dashboard Edition)
+ * 🛠️ Info Commander Server
  * ==============================================================================
- * [Architecture] Big 1(PDF/Web) + Big 2(Auto) + Big 3(Gate) + Web Interface
+ * [Architecture] Big 1(PDF/Web) + Big 2(Auto) + Big 3(Gate)
+ * [Principle]    Simple & Easy to Maintain
  * ==============================================================================
  */
 
@@ -14,26 +15,26 @@ const services = require('./services');
 
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 bot.on('polling_error', (e) => console.log(`[Polling Error] ${e.code}`));
-
 const app = express();
 const port = process.env.PORT || 10000;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-// 1. 啟用 JSON 解析與靜態檔案 (Web Dashboard 核心)
-app.use(express.json());
-app.use(express.static('public'));
+console.log("🚀 Commander System Online (Streamlined Version)");
 
-console.log("🚀 Commander System Online (Web Edition)");
-
-// === Big 1: Bridge-room (主動閱讀 - Telegram) ===
+// === Big 1: Bridge-room (主動閱讀) ===
+// A. 讀連結 (暴力法，不處理 YouTube)
 bot.on('message', async (msg) => {
     if (msg.chat.type !== 'private' || msg.document || !msg.text?.startsWith('http')) return;
+    
+    // 如果是指揮官手動貼 YouTube，就直接忽略 (或回傳: 請貼標題至 Gate)
     if (msg.text.includes('youtube.com') || msg.text.includes('youtu.be')) return;
+
     await bot.sendMessage(msg.chat.id, "🔍 讀取網頁中...");
     const summary = await services.processUrl(msg.text);
     await bot.sendMessage(msg.chat.id, `📰 **摘要**\n\n${summary}`, { parse_mode: 'Markdown' });
 });
 
+// B. 讀 PDF
 bot.on('document', async (msg) => {
     if (msg.chat.type === 'private' && msg.document.mime_type?.includes('pdf')) {
         await bot.sendMessage(msg.chat.id, "📄 讀取 PDF 中...");
@@ -45,7 +46,7 @@ bot.on('document', async (msg) => {
     }
 });
 
-// === Big 3: Gate-Room (社群發布 - Telegram) ===
+// === Big 3: Gate-Room (社群發布) ===
 bot.on('channel_post', async (msg) => {
     if (process.env.GATE_CHANNEL_ID && String(msg.chat.id) !== String(process.env.GATE_CHANNEL_ID)) return;
     const rawText = msg.text || msg.caption;
@@ -79,13 +80,13 @@ bot.on('callback_query', async (q) => {
 });
 
 // === Big 2: 自動化排程 (每日早晨) ===
-schedule.scheduleJob('0 21 * * *', async () => { 
+schedule.scheduleJob('0 21 * * *', async () => { // 05:00
     if(!process.env.MY_CHAT_ID) return;
     const vids = await services.getMostPopularVideos('TW');
     bot.sendMessage(process.env.MY_CHAT_ID, "🔥 **YouTube 熱門**\n" + vids.map(v => `• [${v.title}](${v.url})`).join('\n'), {parse_mode:'Markdown'});
 });
 
-schedule.scheduleJob('10 21 * * *', async () => { 
+schedule.scheduleJob('10 21 * * *', async () => { // 05:10
     const channels = (process.env.MONITOR_CHANNELS || '').split(',');
     for (const ch of channels) {
         if(!ch) continue;
@@ -95,13 +96,13 @@ schedule.scheduleJob('10 21 * * *', async () => {
     }
 });
 
-schedule.scheduleJob('0 22 * * *', async () => { 
+schedule.scheduleJob('0 22 * * *', async () => { // 06:00
     if(!process.env.MY_CHAT_ID) return;
     const trends = await services.getGlobalTrends('TW');
     bot.sendMessage(process.env.MY_CHAT_ID, "🌎 **Google 熱搜**\n" + trends.map((t,i)=>`${i+1}. ${t.title}`).join('\n'));
 });
 
-schedule.scheduleJob('30 21 * * *', async () => { 
+schedule.scheduleJob('30 21 * * *', async () => { // 05:30
     const topics = (process.env.DAILY_TOPIC || '').split(',');
     for (const t of topics) {
         if(!t) continue;
@@ -116,43 +117,5 @@ schedule.scheduleJob('30 21 * * *', async () => {
     }
 });
 
-// === 🆕 Web Dashboard API (新功能區) ===
-
-// 1. 取得 RSS 列表
-app.post('/api/rss', async (req, res) => {
-    // 👇👇👇 您的 RSS 來源清單請在此修改 👇👇👇
-    const rssSources = [
-        { name: 'BBC', url: 'http://feeds.bbci.co.uk/news/world/rss.xml' },
-        { name: 'TechCrunch', url: 'https://techcrunch.com/feed/' },
-        { name: 'Engadget', url: 'https://www.engadget.com/rss.xml' },
-        { name: 'YahooTW', url: 'https://tw.news.yahoo.com/rss/world' }
-    ];
-    // 👆👆👆 ============================== 👆👆👆
-
-    const items = await services.fetchAllRSS(rssSources);
-    res.json(items);
-});
-
-// 2. 讀取並摘要網頁
-app.post('/api/summarize', async (req, res) => {
-    const { url } = req.body;
-    const summary = await services.processUrl(url);
-    res.json({ summary });
-});
-
-// 3. Gate 改寫
-app.post('/api/gate-draft', async (req, res) => {
-    const { text } = req.body;
-    const draft = await services.processGateMessage(text);
-    res.json(draft);
-});
-
-// 4. 發射到 Make
-app.post('/api/publish', async (req, res) => {
-    const payload = req.body; 
-    await services.dispatchToMake(payload);
-    res.json({ success: true });
-});
-
-// 啟動 Server
+app.get('/', (req, res) => res.send('Info Commander Lite Online'));
 app.listen(port, () => console.log(`Server running on port ${port}`));
