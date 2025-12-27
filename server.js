@@ -10,16 +10,18 @@ require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const express = require('express');
 const schedule = require('node-schedule');
-const services = require('./services'); 
+const services = require('./services');
 
+// Telegram Setup
 const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
 bot.on('polling_error', (e) => console.log(`[Polling Error] ${e.code}`));
 
+// Express Setup
 const app = express();
 const port = process.env.PORT || 10000;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-// 1. 啟用 JSON 解析與靜態檔案 (Web Dashboard 核心)
+// 1. Middleware
 app.use(express.json());
 app.use(express.static('public'));
 
@@ -78,29 +80,64 @@ bot.on('callback_query', async (q) => {
     await bot.editMessageText(`${content}\n\n✅ [已發射]`, { chat_id: q.message.chat.id, message_id: q.message.message_id, reply_markup: { inline_keyboard: [] } });
 });
 
-// === Big 2: 自動化排程 (每日早晨) ===
+// ============================================================================
+// === Big 2: 自動化排程 (UPDATED v1227) ===
+// ============================================================================
+
+// 🕒 時段一：每日 21:00 UTC (台灣 05:00) - 多國熱門影片
 schedule.scheduleJob('0 21 * * *', async () => { 
     if(!process.env.MY_CHAT_ID) return;
-    const vids = await services.getMostPopularVideos('TW');
-    bot.sendMessage(process.env.MY_CHAT_ID, "🔥 **YouTube 熱門**\n" + vids.map(v => `• [${v.title}](${v.url})`).join('\n'), {parse_mode:'Markdown'});
-});
+    
+    // ✅ 更新：新增多國清單 (TW, JP, US, GB)
+    const regions = ['TW', 'JP', 'US', 'GB'];
 
-schedule.scheduleJob('10 21 * * *', async () => { 
-    const channels = (process.env.MONITOR_CHANNELS || '').split(',');
-    for (const ch of channels) {
-        if(!ch) continue;
-        const vids = await services.checkChannelLatestVideo(ch.trim());
-        for (const v of vids) bot.sendMessage(process.env.MY_CHAT_ID, `🚨 **大神發片**\n${v.title}\n${v.url}`);
-        await delay(5000);
+    for (const region of regions) {
+        const vids = await services.getMostPopularVideos(region);
+        
+        // 國旗對應
+        const flags = { 'TW': '🇹🇼', 'JP': '🇯🇵', 'US': '🇺🇸', 'GB': '🇬🇧' };
+        const flag = flags[region] || region;
+
+        if (vids.length > 0) {
+            await bot.sendMessage(
+                process.env.MY_CHAT_ID, 
+                `🔥 **YouTube 熱門 - ${flag}**\n` + vids.map(v => `• [${v.title}](${v.url})`).join('\n'), 
+                { parse_mode: 'Markdown' }
+            );
+        }
+        
+        // ✅ 更新：10 秒緩衝 (輕量化負載)
+        await delay(10000);
     }
 });
 
-schedule.scheduleJob('0 22 * * *', async () => { 
+// 🕒 時段二：每日 21:10 UTC (台灣 05:10) - 大神頻道監控
+schedule.scheduleJob('10 21 * * *', async () => { 
     if(!process.env.MY_CHAT_ID) return;
-    const trends = await services.getGlobalTrends('TW');
-    bot.sendMessage(process.env.MY_CHAT_ID, "🌎 **Google 熱搜**\n" + trends.map((t,i)=>`${i+1}. ${t.title}`).join('\n'));
+    const channels = (process.env.MONITOR_CHANNELS || '').split(',');
+    
+    for (const ch of channels) {
+        if(!ch) continue;
+        
+        // ✅ 更新：呼叫新的兩段式 Service
+        const video = await services.checkChannelLatestVideo(ch.trim());
+        
+        // 寧缺勿濫：只有在真正有新片時才發送
+        if (video) {
+            // ✅ 更新：格式調整為 [頻道名] + 標題 + 連結
+            await bot.sendMessage(
+                process.env.MY_CHAT_ID, 
+                `🚨 **[${video.channelTitle}]**\n${video.title}\n${video.url}`
+            );
+        }
+        
+        // ✅ 更新：10 秒緩衝 (維持一致性)
+        await delay(10000);
+    }
 });
 
+// 🕒 時段三：每日 21:30 UTC (台灣 05:30) - 每日議題分析
+// [NOTE] 此區塊尚未修改，保留原樣 (Pending Update)
 schedule.scheduleJob('30 21 * * *', async () => { 
     const topics = (process.env.DAILY_TOPIC || '').split(',');
     for (const t of topics) {
@@ -116,46 +153,42 @@ schedule.scheduleJob('30 21 * * *', async () => {
     }
 });
 
-// === 🆕 Web Dashboard API (新功能區) ===
+// 🕒 時段四：每日 22:00 UTC (台灣 06:00) - Google 熱搜
+// [NOTE] 此區塊尚未修改，保留原樣 (Pending Update)
+schedule.scheduleJob('0 22 * * *', async () => { 
+    if(!process.env.MY_CHAT_ID) return;
+    const trends = await services.getGlobalTrends('TW');
+    bot.sendMessage(process.env.MY_CHAT_ID, "🌎 **Google 熱搜**\n" + trends.map((t,i)=>`${i+1}. ${t.title}`).join('\n'));
+});
 
-// 1. 取得 RSS 列表
+// ============================================================================
+// === 🆕 Web Dashboard API ===
+// ============================================================================
 app.post('/api/rss', async (req, res) => {
-    // 👇👇👇 優化版清單：移除 Google，加入 ABC Australia 👇👇👇
     const rssSources = [
-        // 1. 📰 綜合頭條 (權威媒體)
         { name: 'NYTimes', url: 'https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml' },
         { name: 'BBC', url: 'http://feeds.bbci.co.uk/news/rss.xml' },
         { name: 'Guardian', url: 'https://www.theguardian.com/world/rss' },
-        // 🇦🇺 新增：澳洲廣播公司 (Just In / Top Stories)
         { name: 'ABC-AU', url: 'https://www.abc.net.au/news/feed/2942460/rss.xml' },
-
-        // 2. 💰 財經與商業
         { name: 'WSJ', url: 'https://feeds.a.dj.com/rss/WSJcomUSBusiness.xml' },
-
-        // 3. 🚀 科技與新創
         { name: 'Wired', url: 'https://www.wired.com/feed/rss' }
     ];
-    // 👆👆👆 ================================== 👆👆👆
-
     const items = await services.fetchAllRSS(rssSources);
     res.json(items);
 });
 
-// 2. 讀取並摘要網頁
 app.post('/api/summarize', async (req, res) => {
     const { url } = req.body;
     const summary = await services.processUrl(url);
     res.json({ summary });
 });
 
-// 3. Gate 改寫
 app.post('/api/gate-draft', async (req, res) => {
     const { text } = req.body;
     const draft = await services.processGateMessage(text);
     res.json(draft);
 });
 
-// 4. 發射到 Make
 app.post('/api/publish', async (req, res) => {
     const payload = req.body; 
     await services.dispatchToMake(payload);
