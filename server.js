@@ -175,11 +175,11 @@ schedule.scheduleJob('0 22 * * *', async () => {
 
 // ▼▼▼ 請從這裡開始貼上 (放在時段四後面) ▼▼▼
 
-// 🕒 [新增] 每日 22:40 (台灣時間) - 英國熱搜快報
-schedule.scheduleJob('40 14 * * *', async () => {
+// [更新] 每日 23:10 (台灣時間) - 英國熱搜快報
+schedule.scheduleJob('10 15 * * *', async () => {
     if(!process.env.MY_CHAT_ID) return;
     // 使用 'GB' 代表英國
-    const content = await services.getQuickTrends('GB'); 
+    const content = await services.getQuickTrends('GB');
     bot.sendMessage(process.env.MY_CHAT_ID, "🇬🇧 **英國熱搜**\n" + content, {parse_mode: 'Markdown'});
 });
 

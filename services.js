@@ -210,12 +210,31 @@ async function searchGoogle(q) {
     } catch (e) { return ""; }
 }
 
+// 時段四：Google 熱搜 (迂迴版：使用 rss2json 第三方轉運)
 async function getGlobalTrends(geo) {
     try {
-        const res = await axios.get(`https://trends.google.com/trends/trendingsearches/daily/rss?geo=${geo}`, { timeout: 5000 });
-        const matches = [...res.data.matchAll(/<title>(.*?)<\/title>/g)];
-        return matches.slice(1, 11).map(m => ({ title: m[1].replace(/<!\[CDATA\[|\]\]>/g, '') }));
-    } catch (e) { return []; }
+        // 1. 原始 Google RSS 網址
+        const targetUrl = `https://trends.google.com/trends/trendingsearches/daily/rss?geo=${geo}`;
+        
+        // 2. 使用 rss2json 幫我們去抓 (迂迴戰術)
+        const proxyUrl = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(targetUrl)}`;
+
+        console.log(`[Service] 正在透過轉運站抓取 ${geo} 熱搜...`);
+        
+        const res = await axios.get(proxyUrl, { timeout: 10000 });
+
+        // 3. 解析轉運站回傳的 JSON
+        if (res.data && res.data.status === 'ok' && res.data.items) {
+            return res.data.items.slice(0, 10).map(item => ({ 
+                title: item.title 
+            }));
+        }
+        
+        return [];
+    } catch (e) { 
+        console.log(`[Trends Error] ${geo} 抓取失敗: ${e.message}`);
+        return []; 
+    }
 }
 
 async function dispatchToMake(payload) {
