@@ -210,33 +210,35 @@ async function searchGoogle(q) {
     } catch (e) { return ""; }
 }
 
-// 時段四：Google 熱搜 (迂迴版：使用 rss2json 第三方轉運)
+// 時段四：Google 熱搜 (核武版：使用 SerpApi 穿透封鎖)
 async function getGlobalTrends(geo) {
     try {
-        // 1. 原始 Google RSS 網址
-        const targetUrl = `https://trends.google.com/trends/trendingsearches/daily/rss?geo=${geo}`;
-        
-        // 2. 使用 rss2json 幫我們去抓 (迂迴戰術)
-        const proxyUrl = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(targetUrl)}`;
+        // 如果沒有設定 API Key，就回傳空 (避免報錯)
+        if (!process.env.SERPAPI_KEY) {
+            console.log("[SerpApi] 尚未設定 SERPAPI_KEY");
+            return [];
+        }
 
-        console.log(`[Service] 正在透過轉運站抓取 ${geo} 熱搜...`);
+        console.log(`[Service] 使用 SerpApi 抓取 ${geo} 熱搜...`);
         
-        const res = await axios.get(proxyUrl, { timeout: 10000 });
+        // 使用 axios 呼叫 SerpApi (不需安裝新套件)
+        const url = `https://serpapi.com/search.json?engine=google_trends_trending_now&frequency=daily&geo=${geo}&api_key=${process.env.SERPAPI_KEY}`;
+        
+        const res = await axios.get(url, { timeout: 20000 }); 
 
-        // 3. 解析轉運站回傳的 JSON
-        if (res.data && res.data.status === 'ok' && res.data.items) {
-            return res.data.items.slice(0, 10).map(item => ({ 
-                title: item.title 
+        // SerpApi 的回傳結構解析
+        if (res.data && res.data.trending_searches) {
+            return res.data.trending_searches.slice(0, 10).map(item => ({ 
+                title: item.query 
             }));
         }
         
         return [];
     } catch (e) { 
-        console.log(`[Trends Error] ${geo} 抓取失敗: ${e.message}`);
+        console.log(`[SerpApi Error] ${geo}: ${e.message}`);
         return []; 
     }
 }
-
 async function dispatchToMake(payload) {
     if (process.env.MAKE_WEBHOOK_URL) await axios.post(process.env.MAKE_WEBHOOK_URL, payload).catch(e=>{});
 }
