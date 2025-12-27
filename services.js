@@ -298,11 +298,13 @@ async function startDailyRoutine(keywords = []) {
     
     console.log("========== [Internal Service] 任務執行完畢 ==========");
 }
-
+// [新增] 懶人包：直接回傳排版好的熱搜文字 (防呆版)
+async function getQuickTrends(geo) { const t = await getGlobalTrends(geo); return t.length ? t.map((x,i)=>`${i+1}. ${x.title}`).join('\n') : "無資料"; }
 module.exports = {
     processGateMessage, processPDF, processUrl, generateAnalysisV2,
     searchYouTube, searchGoogle, getGlobalTrends, getMostPopularVideos, checkChannelLatestVideo,
     fetchSmartImage, dispatchToMake,
     fetchRSS, fetchAllRSS,
-    startDailyRoutine // 匯出新函數供 server.js 呼叫
+    startDailyRoutine,  // <--- 這裡記得加逗號
+    getQuickTrends      // <--- 這是您要新增的！
 };
