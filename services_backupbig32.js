@@ -2,8 +2,8 @@
  * ==============================================================================
  * 🛠️ Info Commander Services
  * ==============================================================================
- * [Version]     1227_Update_Slot1_2_RSS_Internal_Logic
- * [Feature]     Internal Execution / Gem-3-Preview / Strict Prompt
+ * [Version]     1227_Update_Slot1_2_RSS_Final
+ * [Feature]     Two-Stage Video Fetch / Sequential RSS / Standard Mode
  * ==============================================================================
  */
 
@@ -23,7 +23,7 @@ const googleKey = process.env.GOOGLE_SEARCH_KEY || process.env.GOOGLE_CLOUD_API_
 const youtube = google.youtube({ version: 'v3', auth: googleKey });
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// ✅ 模型設定 (依照您的指定：gemini-3-flash-preview)
+// ✅ 模型設定
 const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
 
 const getDateDaysAgo = (days) => {
@@ -90,35 +90,25 @@ async function processGateMessage(rawText) {
 }
 
 // ============================================================================
-// 🧠 D. 自動化分析 (🔥 Prompt 升級與嚴格格式化)
+// 🧠 D. 自動化分析 (時段三 - 待後續修改，目前維持原樣)
 // ============================================================================
 async function generateAnalysisV2(ytData, newsData) {
     try {
-        // 定義您的嚴格格式要求
-        const PROMPT_RULES = `
-        【文章撰寫嚴格要求】
-        1. **標題格式**：必須以 "  ▌ " 開頭 (注意前後有空格)，標題需吸睛。
-        2. **寫作結構**：採用「倒金字塔」風格 (最重要的結論與重點寫在第一段)。
-        3. **排版風格**：
-           - 段落與段落之間務必「空一行」。
-           - 語氣專業但易讀，遇到複雜概念或數據時，請改為「列點式」呈現 (Facebook 風格)。
-        4. **字數限制**：控制在 400~600 字之間。
-        5. **結尾要求**：文章的「最後一段」必須統整列出參考來源。
-        `;
-
         const result = await model.generateContent(`
         你是一個全球情報分析師。請針對以下素材進行分析：
         【YouTube 標題】：${ytData.title}
         【相關新聞】：${newsData}
 
-        請輸出一個 **純 JSON 格式** 的回應 (不要 Markdown code block)，包含以下兩個欄位：
-        
-        1. "content": 請根據以下規則撰寫一篇繁體中文說明文章：
-           ${PROMPT_RULES}
-        
+        請輸出一個 **純 JSON 格式** 的回應 (不要 Markdown，不要解釋)，包含以下兩個欄位：
+        1. "content": 一篇繁體中文社群貼文。格式要求：
+           - 標題以 "  ▌ " 開頭。
+           - 倒金字塔風格 (重點在前)。
+           - 段落間空一行。
+           - 語氣專業但易讀 (Facebook 風格)。
+           - 300字以內。
+           - 最後一段列出參考來源。
         2. "image_decision": {"type":"news", "keyword":"${ytData.title} (keywords in English)"}
         `);
-        
         return JSON.parse(result.response.text().replace(/```json|```/g, '').trim());
     } catch (e) { 
         console.log("[Analysis Error]", e.message);
@@ -127,10 +117,10 @@ async function generateAnalysisV2(ytData, newsData) {
 }
 
 // ============================================================================
-// 🤖 E. 自動化爬蟲 (維持原樣)
+// 🤖 E. 自動化爬蟲 (時段一 & 二 核心更新區)
 // ============================================================================
 
-// [時段一] 熱門影片
+// [時段一] 熱門影片 (支援多國代碼)
 async function getMostPopularVideos(regionCode) {
     try {
         const res = await youtube.videos.list({ 
@@ -149,9 +139,10 @@ async function getMostPopularVideos(regionCode) {
     }
 }
 
-// [時段二] 大神發片
+// [時段二] 大神發片 (🔥 更新：兩段式取資料 + 容錯)
 async function checkChannelLatestVideo(channelId) {
     try {
+        // Step 1: 偵察 (Search) - 確認 24 小時內有無新片
         const searchRes = await youtube.search.list({ 
             part: 'snippet', 
             channelId: channelId, 
@@ -162,10 +153,12 @@ async function checkChannelLatestVideo(channelId) {
         });
 
         const videoItem = searchRes.data.items?.[0];
-        if (!videoItem) return null; 
+        if (!videoItem) return null; // 沒新片，安靜離開
 
+        // ⏳ 微暫停 1 秒 (緩衝 API)
         await delay(1000);
 
+        // Step 2: 挖掘 (Details) - 取得詳細資料 (說明欄、頻道全名)
         const videoId = videoItem.id.videoId;
         const detailRes = await youtube.videos.list({
             part: 'snippet,contentDetails',
@@ -175,16 +168,19 @@ async function checkChannelLatestVideo(channelId) {
         const detail = detailRes.data.items?.[0]?.snippet;
         if (!detail) return null; 
 
+        // Step 3: 資料清洗 (說明欄容錯判斷)
         const fullDesc = detail.description || "";
         let finalDesc = "";
 
+        // 若說明欄夠豐富 (>50字)，才視為有效內容
         if (fullDesc.length > 50) {
+            // 這裡未來可擴充：抓時間軸、抓 Tag 等
             finalDesc = fullDesc; 
         }
 
         return {
             title: detail.title,
-            channelTitle: detail.channelTitle,
+            channelTitle: detail.channelTitle, // 正確的頻道名稱
             url: `https://www.youtube.com/watch?v=${videoId}`,
             description: finalDesc,
             publishedAt: detail.publishedAt
@@ -196,6 +192,7 @@ async function checkChannelLatestVideo(channelId) {
     }
 }
 
+// 輔助搜尋 (給時段三用)
 async function searchYouTube(keyword) {
     try {
         const res = await youtube.search.list({ part: 'snippet', q: keyword, order: 'viewCount', type: 'video', publishedAfter: getDateDaysAgo(2), maxResults: 1 });
@@ -210,6 +207,7 @@ async function searchGoogle(q) {
     } catch (e) { return ""; }
 }
 
+// 時段四：Google 熱搜 (Server 不呼叫，保留給 Dashboard 測試)
 async function getGlobalTrends(geo) {
     try {
         const res = await axios.get(`https://trends.google.com/trends/trendingsearches/daily/rss?geo=${geo}`, { timeout: 5000 });
@@ -223,11 +221,12 @@ async function dispatchToMake(payload) {
 }
 
 // ============================================================================
-// 📡 F. RSS 讀取 (維持原樣)
+// 📡 F. RSS 讀取 (Dashboard 用 - 🔥 更新：序列呼吸機制)
 // ============================================================================
 async function fetchRSS(feedUrl, sourceName) {
     try {
         const feed = await parser.parseURL(feedUrl);
+        // ✅ 只抓前 5 筆，輕量化，不需要 content
         return feed.items.slice(0, 5).map(item => ({
             title: `[${sourceName}] ${item.title}`,
             link: item.link,
@@ -241,68 +240,22 @@ async function fetchRSS(feedUrl, sourceName) {
 
 async function fetchAllRSS(rssList) {
     let allItems = [];
+    
+    // 🔄 改為「序列執行」：一個接一個抓，避免瞬間流量衝擊
     for (const rss of rssList) {
         const items = await fetchRSS(rss.url, rss.name);
         allItems = allItems.concat(items);
+        
+        // ⏳ 呼吸時間：每個來源之間間隔 1.5 秒 (輕量化原則)
         await delay(1500);
     }
-    return allItems; 
-}
-
-// ============================================================================
-// 🚀 G. 內部邏輯執行官 (Fire-and-Forget 核心)
-// ============================================================================
-/**
- * 這是 service 內部的「主控台」。
- * 它不依賴 Make 的流程，而是自己執行：搜尋 -> 分析 -> (最後才把結果丟給 Make/DB)
- */
-async function startDailyRoutine(keywords = []) {
-    console.log("========== [Internal Service] 開始執行內部任務 ==========");
-
-    // 1. 決定目標 (若無傳入，使用預設)
-    const targets = keywords.length > 0 ? keywords : ["AI趨勢", "自動化技術"];
-
-    for (const keyword of targets) {
-        try {
-            console.log(`>>> 正在處理關鍵字: ${keyword}`);
-            
-            // 2. 內部執行搜尋 (不依賴外部傳入資料)
-            const ytResult = await searchYouTube(keyword);
-            const newsResult = await searchGoogle(keyword);
-
-            if (ytResult) {
-                // 3. 呼叫 AI 生成 (這裡使用了上方更新過的 Prompt)
-                const analysis = await generateAnalysisV2(ytResult, newsResult);
-
-                if (analysis) {
-                    console.log(`[成功產出] ${keyword} 的文章`);
-                    
-                    // 4. 只將「最終結果」發送出去 (Fire-and-Forget 的最後一步)
-                    await dispatchToMake({
-                        type: 'daily_analysis',
-                        data: analysis,
-                        keyword: keyword
-                    });
-                }
-            } else {
-                console.log(`[跳過] ${keyword} 找不到相關 YouTube 資料`);
-            }
-            
-            // 5. 安全延遲
-            await delay(5000);
-
-        } catch (err) {
-            console.error(`處理 ${keyword} 時發生錯誤:`, err.message);
-        }
-    }
     
-    console.log("========== [Internal Service] 任務執行完畢 ==========");
+    return allItems; 
 }
 
 module.exports = {
     processGateMessage, processPDF, processUrl, generateAnalysisV2,
     searchYouTube, searchGoogle, getGlobalTrends, getMostPopularVideos, checkChannelLatestVideo,
     fetchSmartImage, dispatchToMake,
-    fetchRSS, fetchAllRSS,
-    startDailyRoutine // 匯出新函數供 server.js 呼叫
+    fetchRSS, fetchAllRSS
 };

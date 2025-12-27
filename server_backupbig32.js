@@ -3,7 +3,6 @@
  * 🛠️ Info Commander Server (Web Dashboard Edition)
  * ==============================================================================
  * [Architecture] Big 1(PDF/Web) + Big 2(Auto) + Big 3(Gate) + Web Interface
- * [Version]      1227_Server_Final_Bulletproof
  * ==============================================================================
  */
 
@@ -28,9 +27,7 @@ app.use(express.static('public'));
 
 console.log("🚀 Commander System Online (Web Edition)");
 
-// ============================================================================
 // === Big 1: Bridge-room (主動閱讀 - Telegram) ===
-// ============================================================================
 bot.on('message', async (msg) => {
     if (msg.chat.type !== 'private' || msg.document || !msg.text?.startsWith('http')) return;
     if (msg.text.includes('youtube.com') || msg.text.includes('youtu.be')) return;
@@ -50,9 +47,7 @@ bot.on('document', async (msg) => {
     }
 });
 
-// ============================================================================
 // === Big 3: Gate-Room (社群發布 - Telegram) ===
-// ============================================================================
 bot.on('channel_post', async (msg) => {
     if (process.env.GATE_CHANNEL_ID && String(msg.chat.id) !== String(process.env.GATE_CHANNEL_ID)) return;
     const rawText = msg.text || msg.caption;
@@ -86,45 +81,34 @@ bot.on('callback_query', async (q) => {
 });
 
 // ============================================================================
-// === Big 2: 自動化排程 (Robust Edition) ===
+// === Big 2: 自動化排程 (UPDATED v1227) ===
 // ============================================================================
 
 // 🕒 時段一：每日 21:00 UTC (台灣 05:00) - 多國熱門影片
 schedule.scheduleJob('0 21 * * *', async () => { 
     if(!process.env.MY_CHAT_ID) return;
     
-    console.log('[Scheduler] 啟動多國熱門影片任務...');
-    
-    // ✅ 修正：移除 GB，只保留 TW, JP, US
-    const regions = ['TW', 'JP', 'US'];
+    // ✅ 更新：新增多國清單 (TW, JP, US, GB)
+    const regions = ['TW', 'JP', 'US', 'GB'];
 
     for (const region of regions) {
-        // 🔥 防彈機制：每個國家獨立 Try-Catch
-        try {
-            console.log(`正在處理地區: ${region}`);
-            const vids = await services.getMostPopularVideos(region);
-            
-            const flags = { 'TW': '🇹🇼', 'JP': '🇯🇵', 'US': '🇺🇸' };
-            const flag = flags[region] || region;
+        const vids = await services.getMostPopularVideos(region);
+        
+        // 國旗對應
+        const flags = { 'TW': '🇹🇼', 'JP': '🇯🇵', 'US': '🇺🇸', 'GB': '🇬🇧' };
+        const flag = flags[region] || region;
 
-            if (vids && vids.length > 0) {
-                await bot.sendMessage(
-                    process.env.MY_CHAT_ID, 
-                    `🔥 **YouTube 熱門 - ${flag}**\n` + vids.map(v => `• [${v.title}](${v.url})`).join('\n'), 
-                    { parse_mode: 'Markdown' }
-                );
-            } else {
-                console.log(`[Info] ${region} 無資料或抓取為空。`);
-            }
-        } catch (innerError) {
-            console.error(`❌ [Error] ${region} 發生錯誤 (已略過):`, innerError.message);
-            // 這裡不 throw，確保迴圈繼續跑下一個國家
+        if (vids.length > 0) {
+            await bot.sendMessage(
+                process.env.MY_CHAT_ID, 
+                `🔥 **YouTube 熱門 - ${flag}**\n` + vids.map(v => `• [${v.title}](${v.url})`).join('\n'), 
+                { parse_mode: 'Markdown' }
+            );
         }
         
-        // ✅ 優化：改為 5 秒緩衝 (既安全又不至於超時)
-        await delay(5000);
+        // ✅ 更新：10 秒緩衝 (輕量化負載)
+        await delay(10000);
     }
-    console.log('[Scheduler] 多國熱門影片任務結束');
 });
 
 // 🕒 時段二：每日 21:10 UTC (台灣 05:10) - 大神頻道監控
@@ -135,42 +119,46 @@ schedule.scheduleJob('10 21 * * *', async () => {
     for (const ch of channels) {
         if(!ch) continue;
         
-        // Service 內部已有錯誤處理，回傳 null 代表沒新片或錯誤
+        // ✅ 更新：呼叫新的兩段式 Service
         const video = await services.checkChannelLatestVideo(ch.trim());
         
+        // 寧缺勿濫：只有在真正有新片時才發送
         if (video) {
+            // ✅ 更新：格式調整為 [頻道名] + 標題 + 連結
             await bot.sendMessage(
                 process.env.MY_CHAT_ID, 
                 `🚨 **[${video.channelTitle}]**\n${video.title}\n${video.url}`
             );
         }
-        // 維持 10 秒緩衝 (頻道檢查 API 較敏感)
+        
+        // ✅ 更新：10 秒緩衝 (維持一致性)
         await delay(10000);
     }
 });
 
 // 🕒 時段三：每日 21:30 UTC (台灣 05:30) - 每日議題分析
-// ✅ 使用 Fire-and-Forget 模式：Server 觸發後即放手，由 Service 內部接管
-schedule.scheduleJob('30 21 * * *', function(){ 
-    console.log('[Scheduler] 觸發每日議題分析 (Internal Routine)...');
-    
+// [NOTE] 此區塊尚未修改，保留原樣 (Pending Update)
+schedule.scheduleJob('30 21 * * *', async () => { 
     const topics = (process.env.DAILY_TOPIC || '').split(',');
-    
-    // 不使用 await，讓它在背景執行
-    services.startDailyRoutine(topics);
+    for (const t of topics) {
+        if(!t) continue;
+        const yt = await services.searchYouTube(t);
+        if(yt) {
+            const news = await services.searchGoogle(yt.title);
+            const analysis = await services.generateAnalysisV2(yt, news);
+            const img = await services.fetchSmartImage(analysis.image_decision.keyword, 'news');
+            await services.dispatchToMake({ target: 'auto_daily', content: analysis.content, imageUrl: img || '' });
+        }
+        await delay(10000);
+    }
 });
 
 // 🕒 時段四：每日 22:00 UTC (台灣 06:00) - Google 熱搜
+// [NOTE] 此區塊尚未修改，保留原樣 (Pending Update)
 schedule.scheduleJob('0 22 * * *', async () => { 
     if(!process.env.MY_CHAT_ID) return;
-    try {
-        const trends = await services.getGlobalTrends('TW');
-        if (trends && trends.length > 0) {
-            bot.sendMessage(process.env.MY_CHAT_ID, "🌎 **Google 熱搜**\n" + trends.map((t,i)=>`${i+1}. ${t.title}`).join('\n'));
-        }
-    } catch (e) {
-        console.error("Google Trends Error:", e.message);
-    }
+    const trends = await services.getGlobalTrends('TW');
+    bot.sendMessage(process.env.MY_CHAT_ID, "🌎 **Google 熱搜**\n" + trends.map((t,i)=>`${i+1}. ${t.title}`).join('\n'));
 });
 
 // ============================================================================
@@ -205,18 +193,6 @@ app.post('/api/publish', async (req, res) => {
     const payload = req.body; 
     await services.dispatchToMake(payload);
     res.json({ success: true });
-});
-
-// ✅ 新增：手動觸發每日分析 (Fire-and-Forget)
-app.post('/api/trigger-daily', (req, res) => {
-    const customKeywords = req.body.keywords || [];
-    console.log('[API] 手動觸發每日分析...');
-    
-    // 1. 先回應前端
-    res.json({ status: 'success', message: '背景任務已啟動' });
-    
-    // 2. 背景執行
-    services.startDailyRoutine(customKeywords);
 });
 
 // 啟動 Server

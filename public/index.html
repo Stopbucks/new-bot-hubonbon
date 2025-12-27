@@ -27,9 +27,12 @@
         button { background: var(--accent); color: white; border: none; padding: 8px 16px; cursor: pointer; border-radius: 3px; font-size: 13px; transition: 0.2s; }
         button:hover { opacity: 0.9; transform: translateY(-1px); }
         button:active { transform: translateY(0); }
+        
+        /* 按鈕顏色區分 */
         button.secondary { background: #3c3c3c; }
         button.publish-finance { background: #2da042; } /* Github Green */
         button.publish-sports { background: #ce9178; }  /* VSCode Orange */
+        button.trigger-daily { background: #8e44ad; }   /* Purple for Special Ops */
         
         /* 編輯區 */
         .editor-container { flex: 1; display: flex; flex-direction: column; position: relative; }
@@ -61,7 +64,11 @@
             <div class="controls" style="margin-top: 15px;">
                 <button class="secondary" onclick="analyzeUrl()">🔍 分析網址 (AI)</button>
                 <button class="secondary" onclick="generateDraft()">✨ 生成貼文 (AI)</button>
+                
+                <button class="trigger-daily" onclick="triggerDaily()">🚀 啟動每日分析</button>
+
                 <span style="flex:1"></span>
+                
                 <button class="publish-finance" onclick="publish('post_finance')">💰 發布財經</button>
                 <button class="publish-sports" onclick="publish('post_sports')">🏀 發布體育</button>
             </div>
@@ -172,6 +179,21 @@
                 log('🚀 已成功發射訊號!', 'success');
                 editor.value = ''; // 清空
             } catch (e) { log('發送失敗', 'error'); }
+        }
+
+        // 5. 新增：手動觸發每日分析 (Fire-and-Forget)
+        async function triggerDaily() {
+            if(!confirm('⚠️ 確定要手動啟動「每日議題分析」嗎？\n這將會在背景執行搜尋與 AI 寫作任務。')) return;
+            
+            log('正在呼叫背景任務...', 'loading');
+            try {
+                // 這裡會立刻收到回應，因為 Server 端採用了 Fire-and-Forget
+                const res = await fetch('/api/trigger-daily', { method: 'POST' });
+                const data = await res.json();
+                log(`✅ ${data.message} (請稍候至 Make 或 DB 查看結果)`, 'success');
+            } catch (e) {
+                log('觸發請求失敗', 'error');
+            }
         }
         
         // 啟動時自動載入
