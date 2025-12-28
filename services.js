@@ -2,8 +2,8 @@
  * ==============================================================================
  * 🛠️ Info Commander Services
  * ==============================================================================
- * [Version]     1227_Update_Slot1_2_RSS_Internal_Logic
- * [Feature]     Internal Execution / Gem-3-Preview / Strict Prompt
+ * [Version]     1228_Final_Release_RealityCheck
+ * [Feature]     YouTube Reality Prompt / Callback System / Split Schedule Support
  * ==============================================================================
  */
 
@@ -14,25 +14,24 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const PdfParse = require('pdf-parse');
 const Parser = require('rss-parser');
 
-// ✅ 設定：使用標準連線 (無偽裝表頭)，設定 10 秒超時保護
-const parser = new Parser({
-    timeout: 10000 
-});
+// ✅ 設定：使用標準連線，設定 10 秒超時保護
+const parser = new Parser({ timeout: 10000 });
 
 const googleKey = process.env.GOOGLE_SEARCH_KEY || process.env.GOOGLE_CLOUD_API_KEY;
 const youtube = google.youtube({ version: 'v3', auth: googleKey });
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+// 優先使用新設定的 API Key，若無則回退舊設定
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY_NEW || process.env.GEMINI_API_KEY);
 
-// ✅ 模型設定 (依照您的指定：gemini-3-flash-preview)
-const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
+// ✅ 模型設定：使用 stable 版本確保穩定性 (gemini-1.5-flash)
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const getDateDaysAgo = (days) => {
     const date = new Date();
     date.setDate(date.getDate() - days);
     return date.toISOString();
 };
-
-const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 // ============================================================================
 // 🔍 A. 圖片搜尋 (維持原樣)
@@ -90,11 +89,10 @@ async function processGateMessage(rawText) {
 }
 
 // ============================================================================
-// 🧠 D. 自動化分析 (🔥 Prompt 升級與嚴格格式化)
+// 🧠 D. 自動化分析 (關鍵字議題分析)
 // ============================================================================
 async function generateAnalysisV2(ytData, newsData) {
     try {
-        // 定義您的嚴格格式要求
         const PROMPT_RULES = `
         【文章撰寫嚴格要求】
         1. **標題格式**：必須以 "  ▌ " 開頭 (注意前後有空格)，標題需吸睛。
@@ -127,10 +125,10 @@ async function generateAnalysisV2(ytData, newsData) {
 }
 
 // ============================================================================
-// 🤖 E. 自動化爬蟲 (維持原樣)
+// 🤖 E. 自動化爬蟲 (YouTube 深度解析版)
 // ============================================================================
 
-// [時段一] 熱門影片
+// [時段一] 熱門影片 (維持原樣)
 async function getMostPopularVideos(regionCode) {
     try {
         const res = await youtube.videos.list({ 
@@ -149,45 +147,75 @@ async function getMostPopularVideos(regionCode) {
     }
 }
 
-// [時段二] 大神發片
+// 🔥 [重點功能] 大神發片監控 + 真實系 AI 解讀
 async function checkChannelLatestVideo(channelId) {
     try {
+        // 1. 找出最新的一支影片
         const searchRes = await youtube.search.list({ 
             part: 'snippet', 
             channelId: channelId, 
             order: 'date', 
             type: 'video', 
-            publishedAfter: getDateDaysAgo(1), 
+            publishedAfter: getDateDaysAgo(2), 
             maxResults: 1 
         });
 
         const videoItem = searchRes.data.items?.[0];
         if (!videoItem) return null; 
 
-        await delay(1000);
-
+        // 2. 二次查詢：獲取詳細 Metadata (Tag, ViewCount, Topic)
         const videoId = videoItem.id.videoId;
         const detailRes = await youtube.videos.list({
-            part: 'snippet,contentDetails',
+            part: 'snippet,statistics,topicDetails',
             id: videoId
         });
 
-        const detail = detailRes.data.items?.[0]?.snippet;
+        const detail = detailRes.data.items?.[0];
         if (!detail) return null; 
 
-        const fullDesc = detail.description || "";
-        let finalDesc = "";
+        const snippet = detail.snippet;
+        const stats = detail.statistics;
 
-        if (fullDesc.length > 50) {
-            finalDesc = fullDesc; 
-        }
+        // 3. 準備素材給 AI (包含標籤，協助判斷內容)
+        const rawInfo = `
+        標題: ${snippet.title}
+        頻道: ${snippet.channelTitle}
+        說明欄: ${snippet.description}
+        標籤: ${snippet.tags ? snippet.tags.join(', ') : '無'}
+        `;
+
+        // 4. 呼叫 Gemini (真實系 Prompt)
+        console.log(`[Service] 正在解析 ${snippet.channelTitle} 的真實資訊...`);
+        
+        const aiPrompt = `
+        你是一位客觀的資訊整理員。請閱讀這部 YouTube 影片的原始資料（Metadata），並轉換為繁體中文介紹。
+
+        【原始資料】：
+        ${rawInfo}
+
+        【處理原則】：
+        1. **去雜訊**：請忽略「請訂閱」、「開啟小鈴鐺」、「追蹤IG」、「業配連結」等無效資訊。
+        2. **忠於原意**：只根據標題、說明欄、標籤進行整理。**嚴禁無中生有的過度推論**。
+        3. **適度潤飾**：僅允許 20%~40% 的語意擴充，目的是將破碎的關鍵字串連成通順語句。
+        4. **資訊量判斷**：
+           - 若去除雜訊後資訊極少（例如只有標題吸睛，說明欄空白），請直接輸出：「⚠️ 此影片資訊量貧乏，僅提供標題參考。」
+           - 若有具體內容，請整理為 200~300 字的繁體中文摘要。
+        5. **標註**：若必須根據「標籤 (Tags)」來推測標題未提及的細節，請在該句結尾加上「(AI推論)」。
+
+        【輸出格式】：
+        直接輸出整理後的文字內容即可，不需 Markdown 標題。
+        `;
+
+        const aiResult = await model.generateContent(aiPrompt);
+        const aiArticle = aiResult.response.text();
 
         return {
-            title: detail.title,
-            channelTitle: detail.channelTitle,
+            title: snippet.title,
+            channelTitle: snippet.channelTitle,
             url: `https://www.youtube.com/watch?v=${videoId}`,
-            description: finalDesc,
-            publishedAt: detail.publishedAt
+            aiAnalysis: aiArticle, // AI 整理後的真實資訊
+            viewCount: stats.viewCount,
+            tags: snippet.tags ? snippet.tags.slice(0, 5).join(', ') : ""
         };
 
     } catch (e) { 
@@ -210,42 +238,24 @@ async function searchGoogle(q) {
     } catch (e) { return ""; }
 }
 
-// 時段四：Google 熱搜 (核武版：使用 SerpApi 穿透封鎖)
+// 時段四：Google 熱搜 (核武版)
 async function getGlobalTrends(geo) {
     try {
-        // 如果沒有設定 API Key，就回傳空 (避免報錯)
-        if (!process.env.SERPAPI_KEY) {
-            console.log("[SerpApi] 尚未設定 SERPAPI_KEY");
-            return [];
-        }
-
-        console.log(`[Service] 使用 SerpApi 抓取 ${geo} 熱搜...`);
-        
-        // 使用 axios 呼叫 SerpApi (不需安裝新套件)
+        if (!process.env.SERPAPI_KEY) return [];
         const url = `https://serpapi.com/search.json?engine=google_trends_trending_now&frequency=daily&geo=${geo}&api_key=${process.env.SERPAPI_KEY}`;
-        
         const res = await axios.get(url, { timeout: 20000 }); 
-
-        // SerpApi 的回傳結構解析
         if (res.data && res.data.trending_searches) {
-            return res.data.trending_searches.slice(0, 10).map(item => ({ 
-                title: item.query 
-            }));
+            return res.data.trending_searches.slice(0, 10).map(item => ({ title: item.query }));
         }
-        
         return [];
-    } catch (e) { 
-        console.log(`[SerpApi Error] ${geo}: ${e.message}`);
-        return []; 
-    }
+    } catch (e) { return []; }
 }
+
 async function dispatchToMake(payload) {
     if (process.env.MAKE_WEBHOOK_URL) await axios.post(process.env.MAKE_WEBHOOK_URL, payload).catch(e=>{});
 }
 
-// ============================================================================
-// 📡 F. RSS 讀取 (維持原樣)
-// ============================================================================
+// F. RSS 讀取 (維持原樣)
 async function fetchRSS(feedUrl, sourceName) {
     try {
         const feed = await parser.parseURL(feedUrl);
@@ -254,10 +264,7 @@ async function fetchRSS(feedUrl, sourceName) {
             link: item.link,
             pubDate: item.pubDate
         }));
-    } catch (e) {
-        console.log(`[RSS Warning] ${sourceName} read failed: ${e.message}`);
-        return [{ title: `⚠️ [${sourceName}] 讀取失敗`, link: '#', pubDate: new Date().toISOString() }];
-    }
+    } catch (e) { return [{ title: `⚠️ [${sourceName}] 讀取失敗`, link: '#', pubDate: new Date().toISOString() }]; }
 }
 
 async function fetchAllRSS(rssList) {
@@ -271,61 +278,73 @@ async function fetchAllRSS(rssList) {
 }
 
 // ============================================================================
-// 🚀 G. 內部邏輯執行官 (Fire-and-Forget 核心)
+// 🚀 G. 內部邏輯執行官 (Fire-and-Forget + Callback)
 // ============================================================================
 /**
- * 這是 service 內部的「主控台」。
- * 它不依賴 Make 的流程，而是自己執行：搜尋 -> 分析 -> (最後才把結果丟給 Make/DB)
+ * @param {Array} keywords - 關鍵字列表
+ * @param {Function} callback - (可選) 完成時執行的函式，用於將結果回傳給 Server
  */
-async function startDailyRoutine(keywords = []) {
-    console.log("========== [Internal Service] 開始執行內部任務 ==========");
+async function startDailyRoutine(keywords = [], callback = null) {
+    console.log("========== [Internal Service] 開始執行 (分流模式) ==========");
 
-    // 1. 決定目標 (若無傳入，使用預設)
-    const targets = keywords.length > 0 ? keywords : ["AI趨勢", "自動化技術"];
+    // 若無傳入，使用預設 (防呆)
+    const targets = keywords.length > 0 ? keywords : ["AI趨勢"];
 
     for (const keyword of targets) {
+        if(!keyword) continue;
         try {
             console.log(`>>> 正在處理關鍵字: ${keyword}`);
             
-            // 2. 內部執行搜尋 (不依賴外部傳入資料)
             const ytResult = await searchYouTube(keyword);
             const newsResult = await searchGoogle(keyword);
 
             if (ytResult) {
-                // 3. 呼叫 AI 生成 (這裡使用了上方更新過的 Prompt)
+                // 3. 呼叫 AI 生成
                 const analysis = await generateAnalysisV2(ytResult, newsResult);
 
                 if (analysis) {
-                    console.log(`[成功產出] ${keyword} 的文章`);
+                    console.log(`[成功產出] ${keyword}`);
                     
-                    // 4. 只將「最終結果」發送出去 (Fire-and-Forget 的最後一步)
-                    await dispatchToMake({
-                        type: 'daily_analysis',
-                        data: analysis,
-                        keyword: keyword
-                    });
+                    // 🔥 Callback 機制：若有 callback，直接執行它 (把結果送回 Telegram)
+                    if (callback) {
+                        await callback({
+                            keyword: keyword,
+                            content: analysis.content,
+                            imageUrl: analysis.image_decision?.keyword // 簡單回傳關鍵字給前端抓圖
+                        });
+                    } else {
+                        // 舊模式：丟給 Make (備用)
+                        await dispatchToMake({
+                            type: 'daily_analysis',
+                            data: analysis,
+                            keyword: keyword
+                        });
+                    }
                 }
             } else {
                 console.log(`[跳過] ${keyword} 找不到相關 YouTube 資料`);
             }
             
-            // 5. 安全延遲
-            await delay(5000);
+            await delay(5000); // 安全延遲
 
         } catch (err) {
             console.error(`處理 ${keyword} 時發生錯誤:`, err.message);
         }
     }
-    
     console.log("========== [Internal Service] 任務執行完畢 ==========");
 }
-// [新增] 懶人包：直接回傳排版好的熱搜文字 (防呆版)
-async function getQuickTrends(geo) { const t = await getGlobalTrends(geo); return t.length ? t.map((x,i)=>`${i+1}. ${x.title}`).join('\n') : "無資料"; }
+
+// 懶人包：直接回傳排版好的熱搜文字
+async function getQuickTrends(geo) { 
+    const t = await getGlobalTrends(geo); 
+    return t.length ? t.map((x,i)=>`${i+1}. ${x.title}`).join('\n') : "無資料"; 
+}
+
 module.exports = {
     processGateMessage, processPDF, processUrl, generateAnalysisV2,
     searchYouTube, searchGoogle, getGlobalTrends, getMostPopularVideos, checkChannelLatestVideo,
     fetchSmartImage, dispatchToMake,
     fetchRSS, fetchAllRSS,
-    startDailyRoutine,  // <--- 這裡記得加逗號
-    getQuickTrends      // <--- 這是您要新增的！
+    startDailyRoutine,
+    getQuickTrends
 };

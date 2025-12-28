@@ -2,8 +2,8 @@
  * ==============================================================================
  * 🛠️ Info Commander Server (Web Dashboard Edition)
  * ==============================================================================
- * [Architecture] Big 1(PDF/Web) + Big 2(Auto) + Big 3(Gate) + Web Interface
- * [Version]      1227_Server_Final_Bulletproof
+ * [Architecture] Big 1(PDF/Web) + Big 2(Split Schedule) + Big 3(Gate)
+ * [Version]      1228_Server_Final_Split
  * ==============================================================================
  */
 
@@ -22,11 +22,11 @@ const app = express();
 const port = process.env.PORT || 10000;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-// 1. Middleware
+// Middleware
 app.use(express.json());
 app.use(express.static('public'));
 
-console.log("🚀 Commander System Online (Web Edition)");
+console.log("🚀 Commander System Online (Split Schedule Active)");
 
 // ============================================================================
 // === Big 1: Bridge-room (主動閱讀 - Telegram) ===
@@ -34,7 +34,11 @@ console.log("🚀 Commander System Online (Web Edition)");
 bot.on('message', async (msg) => {
     if (msg.chat.type !== 'private' || msg.document || !msg.text?.startsWith('http')) return;
     if (msg.text.includes('youtube.com') || msg.text.includes('youtu.be')) return;
+    
+    // [Stage 1] 立即回應，防止 User 焦慮
     await bot.sendMessage(msg.chat.id, "🔍 讀取網頁中...");
+    
+    // [Stage 2] 執行分析
     const summary = await services.processUrl(msg.text);
     await bot.sendMessage(msg.chat.id, `📰 **摘要**\n\n${summary}`, { parse_mode: 'Markdown' });
 });
@@ -86,81 +90,80 @@ bot.on('callback_query', async (q) => {
 });
 
 // ============================================================================
-// === Big 2: 自動化排程 (Robust Edition) ===
+// === Big 2: 自動化排程 (分流版) ===
 // ============================================================================
 
-// 🕒 時段一：每日 21:00 UTC (台灣 05:00) - 多國熱門影片
-schedule.scheduleJob('0 21 * * *', async () => { 
+// 🛠️ 共用函式：執行頻道監控並回報 (含 AI 400字報告)
+async function runChannelMonitor(channelString, label) {
     if(!process.env.MY_CHAT_ID) return;
+    const channels = (channelString || '').split(',');
     
-    console.log('[Scheduler] 啟動多國熱門影片任務...');
-    
-    // ✅ 修正：移除 GB，只保留 TW, JP, US
-    const regions = ['TW', 'JP', 'US'];
+    console.log(`[Scheduler] 執行 ${label}...`);
 
-    for (const region of regions) {
-        // 🔥 防彈機制：每個國家獨立 Try-Catch
-        try {
-            console.log(`正在處理地區: ${region}`);
-            const vids = await services.getMostPopularVideos(region);
-            
-            const flags = { 'TW': '🇹🇼', 'JP': '🇯🇵', 'US': '🇺🇸' };
-            const flag = flags[region] || region;
-
-            if (vids && vids.length > 0) {
-                await bot.sendMessage(
-                    process.env.MY_CHAT_ID, 
-                    `🔥 **YouTube 熱門 - ${flag}**\n` + vids.map(v => `• [${v.title}](${v.url})`).join('\n'), 
-                    { parse_mode: 'Markdown' }
-                );
-            } else {
-                console.log(`[Info] ${region} 無資料或抓取為空。`);
-            }
-        } catch (innerError) {
-            console.error(`❌ [Error] ${region} 發生錯誤 (已略過):`, innerError.message);
-            // 這裡不 throw，確保迴圈繼續跑下一個國家
-        }
-        
-        // ✅ 優化：改為 5 秒緩衝 (既安全又不至於超時)
-        await delay(5000);
-    }
-    console.log('[Scheduler] 多國熱門影片任務結束');
-});
-
-// 🕒 時段二：每日 21:10 UTC (台灣 05:10) - 大神頻道監控
-schedule.scheduleJob('10 21 * * *', async () => { 
-    if(!process.env.MY_CHAT_ID) return;
-    const channels = (process.env.MONITOR_CHANNELS || '').split(',');
-    
     for (const ch of channels) {
         if(!ch) continue;
-        
-        // Service 內部已有錯誤處理，回傳 null 代表沒新片或錯誤
         const video = await services.checkChannelLatestVideo(ch.trim());
         
         if (video) {
-            await bot.sendMessage(
-                process.env.MY_CHAT_ID, 
-                `🚨 **[${video.channelTitle}]**\n${video.title}\n${video.url}`
-            );
+            // 📝 格式：真實資料 + AI 整理區塊
+            const msg = `🚨 **${label}：新片上架**\n` +
+                        `👤 ${video.channelTitle}\n` +
+                        `📺 ${video.title}\n` +
+                        `👀 觀看數：${Number(video.viewCount).toLocaleString()}\n` +
+                        `🔗 ${video.url}\n` +
+                        `------------------------------\n` +
+                        `${video.aiAnalysis}\n` + 
+                        `------------------------------`;
+            
+            await bot.sendMessage(process.env.MY_CHAT_ID, msg);
         }
-        // 維持 10 秒緩衝 (頻道檢查 API 較敏感)
-        await delay(10000);
+        await delay(10000); // 頻道間隔緩衝
+    }
+}
+
+// 🕒 [時段一] 05:00 (TW) - 熱門影片 (維持原樣)
+schedule.scheduleJob('0 21 * * *', async () => { 
+    if(!process.env.MY_CHAT_ID) return;
+    const regions = ['TW', 'JP', 'US'];
+    for (const region of regions) {
+        try {
+            console.log(`正在處理地區: ${region}`);
+            const vids = await services.getMostPopularVideos(region);
+            const flags = { 'TW': '🇹🇼', 'JP': '🇯🇵', 'US': '🇺🇸' };
+            if (vids && vids.length > 0) {
+                await bot.sendMessage(
+                    process.env.MY_CHAT_ID, 
+                    `🔥 **YouTube 熱門 - ${flags[region] || region}**\n` + vids.map(v => `• [${v.title}](${v.url})`).join('\n'), 
+                    { parse_mode: 'Markdown' }
+                );
+            }
+        } catch (innerError) { console.error(`[Error] ${region} 發生錯誤`); }
+        await delay(5000);
     }
 });
 
-// 🕒 時段三：每日 21:30 UTC (台灣 05:30) - 每日議題分析
-// ✅ 使用 Fire-and-Forget 模式：Server 觸發後即放手，由 Service 內部接管
-schedule.scheduleJob('30 21 * * *', function(){ 
-    console.log('[Scheduler] 觸發每日議題分析 (Internal Routine)...');
-    
-    const topics = (process.env.DAILY_TOPIC || '').split(',');
-    
-    // 不使用 await，讓它在背景執行
-    services.startDailyRoutine(topics);
+// 🕒 [時段二] 05:10 (TW) - 大神監控 Group A (Morning)
+schedule.scheduleJob('10 21 * * *', async () => { 
+    // 對應 .env: MONITOR_CHANNELS_MORNING
+    await runChannelMonitor(process.env.MONITOR_CHANNELS_MORNING, "☀️ 晨間頻道");
 });
 
-// 🕒 時段四：每日 22:00 UTC (台灣 06:00) - Google 熱搜
+// 🕒 [時段三] 05:30 (TW) - 關鍵字分析 Morning (Finance)
+schedule.scheduleJob('30 21 * * *', function(){ 
+    console.log('[Scheduler] 啟動 💰 晨間財經...');
+    const topics = (process.env.DAILY_TOPIC_FINANCE || '').split(',');
+    
+    // Callback 注入：Service 做完後，執行這裡的代碼
+    services.startDailyRoutine(topics, async (result) => {
+        if(process.env.MY_CHAT_ID) {
+            await bot.sendMessage(process.env.MY_CHAT_ID, 
+                `💰 **晨間財經：${result.keyword}**\n\n${result.content}`
+            );
+        }
+    });
+});
+
+// 🕒 [時段四] 06:00 (TW) - Google 熱搜
 schedule.scheduleJob('0 22 * * *', async () => { 
     if(!process.env.MY_CHAT_ID) return;
     try {
@@ -168,17 +171,34 @@ schedule.scheduleJob('0 22 * * *', async () => {
         if (trends && trends.length > 0) {
             bot.sendMessage(process.env.MY_CHAT_ID, "🌎 **Google 熱搜**\n" + trends.map((t,i)=>`${i+1}. ${t.title}`).join('\n'));
         }
-    } catch (e) {
-        console.error("Google Trends Error:", e.message);
-    }
+    } catch (e) {}
 });
 
-// ▼▼▼ 請從這裡開始貼上 (放在時段四後面) ▼▼▼
+// 🕒 [時段五] 12:00 (TW) - 關鍵字分析 Noon (Tech/Leisure)
+// UTC 04:00 = TW 12:00
+schedule.scheduleJob('0 4 * * *', function(){ 
+    console.log('[Scheduler] 啟動 🍱 午間綜合...');
+    const topics = (process.env.DAILY_TOPIC_TECH || '').split(',');
+    
+    services.startDailyRoutine(topics, async (result) => {
+        if(process.env.MY_CHAT_ID) {
+            await bot.sendMessage(process.env.MY_CHAT_ID, 
+                `🍱 **午間報告：${result.keyword}**\n\n${result.content}`
+            );
+        }
+    });
+});
 
-// [更新] 每日 23:45 (台灣時間) - 英國熱搜快報
+// 🕒 [時段六] 13:00 (TW) - 大神監控 Group B (Afternoon)
+// UTC 05:00 = TW 13:00
+schedule.scheduleJob('0 5 * * *', async () => { 
+    // 對應 .env: MONITOR_CHANNELS_AFTERNOON
+    await runChannelMonitor(process.env.MONITOR_CHANNELS_AFTERNOON, "☕ 午間頻道");
+});
+
+// 🕒 [時段七] 23:45 (TW) - 英國熱搜 (Bonus)
 schedule.scheduleJob('45 15 * * *', async () => {
     if(!process.env.MY_CHAT_ID) return;
-    // 使用 'GB' 代表英國
     const content = await services.getQuickTrends('GB');
     bot.sendMessage(process.env.MY_CHAT_ID, "🇬🇧 **英國熱搜**\n" + content, {parse_mode: 'Markdown'});
 });
@@ -190,9 +210,6 @@ app.post('/api/rss', async (req, res) => {
     const rssSources = [
         { name: 'NYTimes', url: 'https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml' },
         { name: 'BBC', url: 'http://feeds.bbci.co.uk/news/rss.xml' },
-        { name: 'Guardian', url: 'https://www.theguardian.com/world/rss' },
-        { name: 'ABC-AU', url: 'https://www.abc.net.au/news/feed/2942460/rss.xml' },
-        { name: 'WSJ', url: 'https://feeds.a.dj.com/rss/WSJcomUSBusiness.xml' },
         { name: 'Wired', url: 'https://www.wired.com/feed/rss' }
     ];
     const items = await services.fetchAllRSS(rssSources);
@@ -212,21 +229,20 @@ app.post('/api/gate-draft', async (req, res) => {
 });
 
 app.post('/api/publish', async (req, res) => {
-    const payload = req.body; 
-    await services.dispatchToMake(payload);
+    await services.dispatchToMake(req.body);
     res.json({ success: true });
 });
 
-// ✅ 新增：手動觸發每日分析 (Fire-and-Forget)
+// ✅ 手動觸發分析 (防 Timeout 機制)
 app.post('/api/trigger-daily', (req, res) => {
-    const customKeywords = req.body.keywords || [];
-    console.log('[API] 手動觸發每日分析...');
-    
-    // 1. 先回應前端
-    res.json({ status: 'success', message: '背景任務已啟動' });
+    // 1. 先回傳 OK
+    res.json({ status: 'success', message: '背景分析已啟動' });
     
     // 2. 背景執行
-    services.startDailyRoutine(customKeywords);
+    const customKeywords = req.body.keywords || [];
+    services.startDailyRoutine(customKeywords, async (result) => {
+        if(process.env.MY_CHAT_ID) await bot.sendMessage(process.env.MY_CHAT_ID, `手動分析完成：${result.keyword}\n\n${result.content}`);
+    });
 });
 
 // 啟動 Server
