@@ -174,9 +174,9 @@ schedule.scheduleJob('0 22 * * *', async () => {
     } catch (e) {}
 });
 
-// 🕒 [時段五] 12:00 (TW) - 關鍵字分析 Noon (Tech/Leisure)
-// UTC 04:00 = TW 12:00
-schedule.scheduleJob('0 4 * * *', function(){ 
+// 🕒 [時段五] 12:40 (TW) - 關鍵字分析 Noon (Tech/Leisure)
+// UTC 04:40 = TW 12:40
+schedule.scheduleJob('40 4 * * *', function(){
     console.log('[Scheduler] 啟動 🍱 午間綜合...');
     const topics = (process.env.DAILY_TOPIC_TECH || '').split(',');
     

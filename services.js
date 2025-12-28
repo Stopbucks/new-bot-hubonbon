@@ -22,8 +22,8 @@ const youtube = google.youtube({ version: 'v3', auth: googleKey });
 // 優先使用新設定的 API Key，若無則回退舊設定
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY_NEW || process.env.GEMINI_API_KEY);
 
-// ✅ 模型設定：使用 stable 版本確保穩定性 (gemini-1.5-flash)
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+// ✅ 模型設定：使用 gemini-3-flash-preview 版本(最高權限版本，請勿更動/任何情況)
+const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
