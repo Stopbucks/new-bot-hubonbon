@@ -3,7 +3,7 @@
  * 🛠️ Info Commander Server (Web Dashboard Edition)
  * ==============================================================================
  * [Architecture] Big 1(PDF/Web) + Big 2(Split Schedule) + Big 3(Gate)
- * [Version]      1228_Server_Final_With_BBC
+ * [Version]      1228_Server_Final_Revised_Schedule
  * ==============================================================================
  */
 
@@ -27,6 +27,31 @@ app.use(express.json());
 app.use(express.static('public'));
 
 console.log("🚀 Commander System Online (Split Schedule Active)");
+
+// ============================================================================
+// === UX 輔助函式：視覺緩衝 + 分批發送 + 呼吸感排版 ===
+// ============================================================================
+async function sendNewsWithUX(chatId, headerEmoji, headerTitle, newsData) {
+    if (!newsData || newsData.length === 0) return;
+
+    // 1. 視覺緩衝 (Visual Buffer)：先發送一個獨立的大標題/Emoji
+    await bot.sendMessage(chatId, `${headerEmoji} **${headerTitle}**`, { parse_mode: 'Markdown' });
+    await delay(500); // 微小延遲
+
+    // 2. 內容排版 (Formatting)
+    // 格式：🔹 [來源] 標題 (空兩行)
+    const formattedItems = newsData.map(item => `🔹 *[${item.sourceName}]* ${item.title}`).map(str => str + "\n\n");
+
+    // 3. 分批發送 (Chunking)：每 8 則切成一塊
+    const CHUNK_SIZE = 8;
+    for (let i = 0; i < formattedItems.length; i += CHUNK_SIZE) {
+        const chunk = formattedItems.slice(i, i + CHUNK_SIZE);
+        const messageBody = chunk.join('');
+        
+        await bot.sendMessage(chatId, messageBody, { parse_mode: 'Markdown' });
+        await delay(300); // 防止發送太快被 Telegram 限流
+    }
+}
 
 // ============================================================================
 // === Big 1: Bridge-room (主動閱讀 - Telegram) ===
@@ -90,7 +115,7 @@ bot.on('callback_query', async (q) => {
 });
 
 // ============================================================================
-// === Big 2: 自動化排程 (分流版) ===
+// === Big 2: 自動化排程 (新版時間表) ===
 // ============================================================================
 
 // 🛠️ 共用函式：執行頻道監控並回報 (含 AI 400字報告)
@@ -105,7 +130,6 @@ async function runChannelMonitor(channelString, label) {
         const video = await services.checkChannelLatestVideo(ch.trim());
         
         if (video) {
-            // 📝 格式：真實資料 + AI 整理區塊
             const msg = `🚨 **${label}：新片上架**\n` +
                         `👤 ${video.channelTitle}\n` +
                         `📺 ${video.title}\n` +
@@ -117,11 +141,11 @@ async function runChannelMonitor(channelString, label) {
             
             await bot.sendMessage(process.env.MY_CHAT_ID, msg);
         }
-        await delay(10000); // 頻道間隔緩衝
+        await delay(10000); 
     }
 }
 
-// 🕒 [時段一] 05:00 (TW) - 熱門影片 (維持原樣)
+// 🕒 [05:00] YouTube 熱門 (維持)
 schedule.scheduleJob('0 21 * * *', async () => { 
     if(!process.env.MY_CHAT_ID) return;
     const regions = ['TW', 'JP', 'US'];
@@ -142,18 +166,17 @@ schedule.scheduleJob('0 21 * * *', async () => {
     }
 });
 
-// 🕒 [時段二] 05:10 (TW) - 大神監控 Group A (Morning)
+// 🕒 [05:10] 大神監控 A (維持)
 schedule.scheduleJob('10 21 * * *', async () => { 
     // 對應 .env: MONITOR_CHANNELS_MORNING
     await runChannelMonitor(process.env.MONITOR_CHANNELS_MORNING, "☀️ 晨間頻道");
 });
 
-// 🕒 [時段三] 05:30 (TW) - 關鍵字分析 Morning (Finance)
+// 🕒 [05:30] Gemini 財經研報 (維持)
 schedule.scheduleJob('30 21 * * *', function(){ 
     console.log('[Scheduler] 啟動 💰 晨間財經...');
     const topics = (process.env.DAILY_TOPIC_FINANCE || '').split(',');
     
-    // Callback 注入：Service 做完後，執行這裡的代碼
     services.startDailyRoutine(topics, async (result) => {
         if(process.env.MY_CHAT_ID) {
             await bot.sendMessage(process.env.MY_CHAT_ID, 
@@ -163,21 +186,29 @@ schedule.scheduleJob('30 21 * * *', function(){
     });
 });
 
-// 🕒 [時段四] 06:00 (TW) - Google 熱搜
-schedule.scheduleJob('0 22 * * *', async () => { 
+// 🕒 [06:10] 🇯🇵 日本情報 RSS (新 - UTC 22:10)
+schedule.scheduleJob('10 22 * * *', async () => {
     if(!process.env.MY_CHAT_ID) return;
-    try {
-        const trends = await services.getGlobalTrends('TW');
-        if (trends && trends.length > 0) {
-            bot.sendMessage(process.env.MY_CHAT_ID, "🌎 **Google 熱搜**\n" + trends.map((t,i)=>`${i+1}. ${t.title}`).join('\n'));
-        }
-    } catch (e) {}
+    const news = await services.getJPNews();
+    await sendNewsWithUX(process.env.MY_CHAT_ID, "🇯🇵", "日本焦點 (Japan Times/Today)", news);
 });
 
-// 🕒 [時段五] 14:00 (TW) - 關鍵字分析 Afternoon (Tech/Leisure)
-// UTC 06:00 = TW 14:00
+// 🕒 [06:20] 🗽 美國情報 RSS (新 - UTC 22:20)
+schedule.scheduleJob('20 22 * * *', async () => {
+    if(!process.env.MY_CHAT_ID) return;
+    const news = await services.getUSNews();
+    await sendNewsWithUX(process.env.MY_CHAT_ID, "🗽", "美國早報觀測 (NYT/Wired)", news);
+});
+
+// 🕒 [13:00] 大神監控 B (維持)
+schedule.scheduleJob('0 5 * * *', async () => { 
+    // 對應 .env: MONITOR_CHANNELS_AFTERNOON
+    await runChannelMonitor(process.env.MONITOR_CHANNELS_AFTERNOON, "☕ 午間頻道");
+});
+
+// 🕒 [14:00] Gemini 午間綜合 (維持)
 schedule.scheduleJob('0 6 * * *', function(){
-    console.log('[Scheduler] 啟動 🍱 午間綜合 (14:00)...');
+    console.log('[Scheduler] 啟動 🍱 午間綜合...');
     const topics = (process.env.DAILY_TOPIC_TECH || '').split(',');
     
     services.startDailyRoutine(topics, async (result) => {
@@ -189,42 +220,18 @@ schedule.scheduleJob('0 6 * * *', function(){
     });
 });
 
-// 🕒 [時段六] 13:00 (TW) - 大神監控 Group B (Afternoon)
-// UTC 05:00 = TW 13:00
-schedule.scheduleJob('0 5 * * *', async () => { 
-    // 對應 .env: MONITOR_CHANNELS_AFTERNOON
-    await runChannelMonitor(process.env.MONITOR_CHANNELS_AFTERNOON, "☕ 午間頻道");
+// 🕒 [14:40] 🇬🇧 英國情報 RSS (維持)
+schedule.scheduleJob('40 6 * * *', async () => {
+    if(!process.env.MY_CHAT_ID) return;
+    const news = await services.getGBNews();
+    await sendNewsWithUX(process.env.MY_CHAT_ID, "🇬🇧", "英國 BBC 快訊", news);
 });
 
-// 🕒 [時段七] 23:45 (TW) - 英國熱搜 (Bonus)
-schedule.scheduleJob('45 15 * * *', async () => {
+// 🕒 [16:10] 🇫🇷 法國情報 RSS (新 - UTC 08:10)
+schedule.scheduleJob('10 8 * * *', async () => {
     if(!process.env.MY_CHAT_ID) return;
-    const content = await services.getQuickTrends('GB');
-    bot.sendMessage(process.env.MY_CHAT_ID, "🇬🇧 **英國熱搜**\n" + content, {parse_mode: 'Markdown'});
-});
-
-// 🕒 [時段八] 14:40 (TW) - BBC RSS 測試 (New Feature)
-// UTC 06:40 = TW 14:40
-schedule.scheduleJob('40 6 * * *', async () => { 
-    if(!process.env.MY_CHAT_ID) return;
-    
-    console.log('[Scheduler] 啟動 🇬🇧 BBC RSS 測試...');
-    
-    try {
-        const bbcNews = await services.getBBCTrends();
-        
-        if (bbcNews && bbcNews.length > 0) {
-            const content = bbcNews.map((t, i) => `${i+1}. ${t.title}`).join('\n');
-            await bot.sendMessage(
-                process.env.MY_CHAT_ID, 
-                "🇬🇧 **英國 BBC 快訊 (RSS穩定版)**\n\n" + content
-            );
-        } else {
-             console.log('[Scheduler] BBC 回傳空資料');
-        }
-    } catch (e) {
-        console.error('[Scheduler Error] BBC 測試失敗:', e.message);
-    }
+    const news = await services.getFRNews();
+    await sendNewsWithUX(process.env.MY_CHAT_ID, "🇫🇷", "法國觀點 (France 24)", news);
 });
 
 // ============================================================================
@@ -257,12 +264,9 @@ app.post('/api/publish', async (req, res) => {
     res.json({ success: true });
 });
 
-// ✅ 手動觸發分析 (防 Timeout 機制)
+// ✅ 手動觸發分析
 app.post('/api/trigger-daily', (req, res) => {
-    // 1. 先回傳 OK
     res.json({ status: 'success', message: '背景分析已啟動' });
-    
-    // 2. 背景執行
     const customKeywords = req.body.keywords || [];
     services.startDailyRoutine(customKeywords, async (result) => {
         if(process.env.MY_CHAT_ID) await bot.sendMessage(process.env.MY_CHAT_ID, `手動分析完成：${result.keyword}\n\n${result.content}`);

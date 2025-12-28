@@ -2,8 +2,8 @@
  * ==============================================================================
  * 🛠️ Info Commander Services
  * ==============================================================================
- * [Version]     1228_Final_Release_BBC_RSS_Added
- * [Feature]     BBC RSS Backup / YouTube Reality Prompt / Split Schedule
+ * [Version]     1228_Final_RSS_Global_Edition
+ * [Feature]     RSS Aggregator (US/JP/GB/FR) / YouTube Reality Prompt / Split Schedule
  * ==============================================================================
  */
 
@@ -22,7 +22,7 @@ const youtube = google.youtube({ version: 'v3', auth: googleKey });
 // 優先使用新設定的 API Key，若無則回退舊設定
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY_NEW || process.env.GEMINI_API_KEY);
 
-// ✅ 模型設定：使用 gemini-3-flash-preview 版本(最高權限版本，請勿更動/任何情況)
+// ✅ 模型設定：使用 gemini-3-flash-preview 版本
 const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
 
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -238,24 +238,11 @@ async function searchGoogle(q) {
     } catch (e) { return ""; }
 }
 
-// 時段四：Google 熱搜 (核武版)
-async function getGlobalTrends(geo) {
-    try {
-        if (!process.env.SERPAPI_KEY) return [];
-        const url = `https://serpapi.com/search.json?engine=google_trends_trending_now&frequency=daily&geo=${geo}&api_key=${process.env.SERPAPI_KEY}`;
-        const res = await axios.get(url, { timeout: 20000 }); 
-        if (res.data && res.data.trending_searches) {
-            return res.data.trending_searches.slice(0, 10).map(item => ({ title: item.query }));
-        }
-        return [];
-    } catch (e) { return []; }
-}
-
 async function dispatchToMake(payload) {
     if (process.env.MAKE_WEBHOOK_URL) await axios.post(process.env.MAKE_WEBHOOK_URL, payload).catch(e=>{});
 }
 
-// F. RSS 讀取 (維持原樣 + 新增 BBC 模組)
+// F. RSS 讀取 (Web Dashboard API 使用)
 async function fetchRSS(feedUrl, sourceName) {
     try {
         const feed = await parser.parseURL(feedUrl);
@@ -277,37 +264,81 @@ async function fetchAllRSS(rssList) {
     return allItems; 
 }
 
-// 🇬🇧 [新功能] BBC RSS 轉熱搜模式 (輕量化替代方案)
-async function getBBCTrends() {
-    try {
-        console.log(`[Service] 正在抓取 BBC News (RSS) 作為熱搜替代...`);
-        // 使用已宣告的 rss-parser 實例
-        const feed = await parser.parseURL('http://feeds.bbci.co.uk/news/rss.xml');
+// ============================================================================
+// 🌍 全球情報 RSS 聚合區 (取代 SerpApi / Google Trends)
+// ============================================================================
 
-        if (feed && feed.items) {
-            // 只取前 10 條，格式化為與 Google Trends 相容的結構
-            return feed.items.slice(0, 10).map(item => ({ 
-                title: item.title 
-            }));
-        }
+// 🛠️ 內部共用工具：RSS 抓取、混合排序、錯誤處理
+async function fetchRSSGroup(sources) {
+    try {
+        // 使用 Promise.all 平行發送請求，降低 Render 等待時間
+        const tasks = sources.map(async (src) => {
+            try {
+                const feed = await parser.parseURL(src.url);
+                // 每個來源取前 4 則
+                return feed.items.slice(0, 4).map(item => ({
+                    title: item.title,
+                    link: item.link,
+                    sourceName: src.name
+                }));
+            } catch (e) {
+                console.log(`[RSS Warning] ${src.name} 讀取失敗: ${e.message}`);
+                return [];
+            }
+        });
+
+        const results = await Promise.all(tasks);
+        const flatList = results.flat();
+        
+        if (flatList.length === 0) return [];
+
+        return flatList;
+    } catch (e) {
+        console.error(`[Aggregator Error] RSS 聚合失敗: ${e.message}`);
         return [];
-    } catch (e) { 
-        console.log(`[BBC Error] RSS 讀取失敗: ${e.message}`);
-        return [{ title: "BBC 連線暫時異常" }]; 
     }
+}
+
+// 🇺🇸 美國區塊
+async function getUSNews() {
+    console.log('[Service] 抓取 US RSS...');
+    return await fetchRSSGroup([
+        { name: 'NY Times', url: 'https://rss.nytimes.com/services/xml/rss/nyt/World.xml' },
+        { name: 'Wired', url: 'https://www.wired.com/feed/rss' }
+    ]);
+}
+
+// 🇯🇵 日本區塊
+async function getJPNews() {
+    console.log('[Service] 抓取 JP RSS...');
+    return await fetchRSSGroup([
+        { name: 'Japan Times', url: 'https://www.japantimes.co.jp/feed' },
+        { name: 'Japan Today', url: 'https://japantoday.com/feed' }
+    ]);
+}
+
+// 🇬🇧 英國區塊
+async function getGBNews() {
+    console.log('[Service] 抓取 GB RSS...');
+    return await fetchRSSGroup([
+        { name: 'BBC', url: 'http://feeds.bbci.co.uk/news/rss.xml' }
+    ]);
+}
+
+// 🇫🇷 法國區塊
+async function getFRNews() {
+    console.log('[Service] 抓取 FR RSS...');
+    return await fetchRSSGroup([
+        { name: 'France 24', url: 'https://www.france24.com/en/rss' }
+    ]);
 }
 
 // ============================================================================
 // 🚀 G. 內部邏輯執行官 (Fire-and-Forget + Callback)
 // ============================================================================
-/**
- * @param {Array} keywords - 關鍵字列表
- * @param {Function} callback - (可選) 完成時執行的函式，用於將結果回傳給 Server
- */
 async function startDailyRoutine(keywords = [], callback = null) {
     console.log("========== [Internal Service] 開始執行 (分流模式) ==========");
 
-    // 若無傳入，使用預設 (防呆)
     const targets = keywords.length > 0 ? keywords : ["AI趨勢"];
 
     for (const keyword of targets) {
@@ -319,21 +350,18 @@ async function startDailyRoutine(keywords = [], callback = null) {
             const newsResult = await searchGoogle(keyword);
 
             if (ytResult) {
-                // 3. 呼叫 AI 生成
                 const analysis = await generateAnalysisV2(ytResult, newsResult);
 
                 if (analysis) {
                     console.log(`[成功產出] ${keyword}`);
                     
-                    // 🔥 Callback 機制：若有 callback，直接執行它 (把結果送回 Telegram)
                     if (callback) {
                         await callback({
                             keyword: keyword,
                             content: analysis.content,
-                            imageUrl: analysis.image_decision?.keyword // 簡單回傳關鍵字給前端抓圖
+                            imageUrl: analysis.image_decision?.keyword 
                         });
                     } else {
-                        // 舊模式：丟給 Make (備用)
                         await dispatchToMake({
                             type: 'daily_analysis',
                             data: analysis,
@@ -344,8 +372,7 @@ async function startDailyRoutine(keywords = [], callback = null) {
             } else {
                 console.log(`[跳過] ${keyword} 找不到相關 YouTube 資料`);
             }
-            
-            await delay(5000); // 安全延遲
+            await delay(5000); 
 
         } catch (err) {
             console.error(`處理 ${keyword} 時發生錯誤:`, err.message);
@@ -354,18 +381,18 @@ async function startDailyRoutine(keywords = [], callback = null) {
     console.log("========== [Internal Service] 任務執行完畢 ==========");
 }
 
-// 懶人包：直接回傳排版好的熱搜文字
+// 懶人包：直接回傳排版好的熱搜文字 (已用 RSS 取代 Google Trends)
 async function getQuickTrends(geo) { 
-    const t = await getGlobalTrends(geo); 
-    return t.length ? t.map((x,i)=>`${i+1}. ${x.title}`).join('\n') : "無資料"; 
+    return "已轉移至 RSS 分流架構"; 
 }
 
 module.exports = {
     processGateMessage, processPDF, processUrl, generateAnalysisV2,
-    searchYouTube, searchGoogle, getGlobalTrends, getMostPopularVideos, checkChannelLatestVideo,
+    searchYouTube, searchGoogle, getMostPopularVideos, checkChannelLatestVideo,
     fetchSmartImage, dispatchToMake,
     fetchRSS, fetchAllRSS,
     startDailyRoutine,
     getQuickTrends,
-    getBBCTrends // 👈 已新增導出
+    // 👇 RSS 專屬函式
+    getUSNews, getJPNews, getGBNews, getFRNews
 };
