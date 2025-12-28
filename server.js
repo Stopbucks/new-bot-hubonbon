@@ -22,6 +22,31 @@ const app = express();
 const port = process.env.PORT || 10000;
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
+// ============================================================================
+// 🕵️‍♂️ X-Ray Debugger (請暫時加入這段來抓蟲)
+// ============================================================================
+bot.on('polling_error', (error) => {
+    console.log(`[Polling Error] code: ${error.code}`); 
+});
+
+// 監聽所有類型的訊息 (包含私訊轉傳)
+bot.on('message', (msg) => {
+    console.log(`[DEBUG: Message] ChatID: ${msg.chat.id} | Type: ${msg.chat.type} | Text: ${msg.text?.substring(0, 20)}...`);
+});
+
+// 監聽所有頻道的貼文 (包含你轉傳過去的)
+bot.on('channel_post', (msg) => {
+    console.log(`[DEBUG: Channel] ChatID: ${msg.chat.id} | EnvID: ${process.env.GATE_CHANNEL_ID}`);
+    console.log(`[DEBUG: Channel Content] ${msg.text || msg.caption || 'No Text'}`);
+    
+    // 檢查 ID 是否吻合
+    if (String(msg.chat.id) !== String(process.env.GATE_CHANNEL_ID)) {
+        console.log(`❌ [ID MISMATCH] 你的 Env 設定是 ${process.env.GATE_CHANNEL_ID}，但實際收到的是 ${msg.chat.id}`);
+    } else {
+        console.log(`✅ [ID MATCH] ID 正確，準備進入處理流程...`);
+    }
+});
+
 // Middleware
 app.use(express.json());
 app.use(express.static('public'));
