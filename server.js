@@ -1,294 +1,92 @@
-/**
- * ==============================================================================
- * 🛠️ Info Commander Server (Web Dashboard Edition)
- * ==============================================================================
- * [Architecture] Big 1(PDF/Web) + Big 2(Split Schedule) + Big 3(Gate)
- * [Version]      1228_Server_Final_Max_Load
- * ==============================================================================
- */
-
-require('dotenv').config();
-const TelegramBot = require('node-telegram-bot-api');
-const express = require('express');
-const schedule = require('node-schedule');
-const services = require('./services');
-
-// Telegram Setup
-const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
-bot.on('polling_error', (e) => console.log(`[Polling Error] ${e.code}`));
-
-// Express Setup
-const app = express();
-const port = process.env.PORT || 10000;
-const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-
 // ============================================================================
-// 🕵️‍♂️ X-Ray Debugger (請暫時加入這段來抓蟲)
-// ============================================================================
-bot.on('polling_error', (error) => {
-    console.log(`[Polling Error] code: ${error.code}`); 
-});
-
-// 監聽所有類型的訊息 (包含私訊轉傳)
-bot.on('message', (msg) => {
-    console.log(`[DEBUG: Message] ChatID: ${msg.chat.id} | Type: ${msg.chat.type} | Text: ${msg.text?.substring(0, 20)}...`);
-});
-
-// 監聽所有頻道的貼文 (包含你轉傳過去的)
-bot.on('channel_post', (msg) => {
-    console.log(`[DEBUG: Channel] ChatID: ${msg.chat.id} | EnvID: ${process.env.GATE_CHANNEL_ID}`);
-    console.log(`[DEBUG: Channel Content] ${msg.text || msg.caption || 'No Text'}`);
-    
-    // 檢查 ID 是否吻合
-    if (String(msg.chat.id) !== String(process.env.GATE_CHANNEL_ID)) {
-        console.log(`❌ [ID MISMATCH] 你的 Env 設定是 ${process.env.GATE_CHANNEL_ID}，但實際收到的是 ${msg.chat.id}`);
-    } else {
-        console.log(`✅ [ID MATCH] ID 正確，準備進入處理流程...`);
-    }
-});
-
-// Middleware
-app.use(express.json());
-app.use(express.static('public'));
-
-console.log("🚀 Commander System Online (Split Schedule Active)");
-
-// ============================================================================
-// === UX 輔助函式：視覺緩衝 + 分批發送 + 呼吸感排版 ===
-// ============================================================================
-async function sendNewsWithUX(chatId, headerEmoji, headerTitle, newsData) {
-    if (!newsData || newsData.length === 0) return;
-
-    // 1. 視覺緩衝
-    await bot.sendMessage(chatId, `${headerEmoji} **${headerTitle}**`, { parse_mode: 'Markdown' });
-    await delay(500); 
-
-    // 2. 內容排版
-    const formattedItems = newsData.map(item => `🔹 *[${item.sourceName}]* ${item.title}`).map(str => str + "\n\n");
-
-    // 3. 分批發送 (Chunking) 🔥 每 5 則切分
-    const CHUNK_SIZE = 5; 
-    for (let i = 0; i < formattedItems.length; i += CHUNK_SIZE) {
-        const chunk = formattedItems.slice(i, i + CHUNK_SIZE);
-        const messageBody = chunk.join('');
-        
-        await bot.sendMessage(chatId, messageBody, { parse_mode: 'Markdown' });
-        await delay(300); // 防止發送太快被 Telegram 限流
-    }
-}
-
-// ============================================================================
-// === Big 1: Bridge-room (主動閱讀 - Telegram) ===
-// ============================================================================
-bot.on('message', async (msg) => {
-    if (msg.chat.type !== 'private' || msg.document || !msg.text?.startsWith('http')) return;
-    if (msg.text.includes('youtube.com') || msg.text.includes('youtu.be')) return;
-    
-    await bot.sendMessage(msg.chat.id, "🔍 讀取網頁中...");
-    const summary = await services.processUrl(msg.text);
-    await bot.sendMessage(msg.chat.id, `📰 **摘要**\n\n${summary}`, { parse_mode: 'Markdown' });
-});
-
-bot.on('document', async (msg) => {
-    if (msg.chat.type === 'private' && msg.document.mime_type?.includes('pdf')) {
-        await bot.sendMessage(msg.chat.id, "📄 讀取 PDF 中...");
-        try {
-            const link = await bot.getFileLink(msg.document.file_id);
-            const summary = await services.processPDF(link);
-            await bot.sendMessage(msg.chat.id, summary, { parse_mode: 'Markdown' });
-        } catch (e) { await bot.sendMessage(msg.chat.id, "❌ 失敗"); }
-    }
-});
-
-// ============================================================================
-// === Big 3: Gate-Room (社群發布 - Telegram) ===
+// === Big 3: Gate-Room (社群發布 - 智能進度回報版) ===
 // ============================================================================
 bot.on('channel_post', async (msg) => {
+    // 1. 檢查是否為目標頻道
     if (process.env.GATE_CHANNEL_ID && String(msg.chat.id) !== String(process.env.GATE_CHANNEL_ID)) return;
+    
     const rawText = msg.text || msg.caption;
     if (!rawText) return;
 
+    // 2. [UX] 立即回傳「處理中」訊息 (避免使用者以為當機)
+    // 這樣做可以讓使用者知道 Bot 活著，且爭取 AI 思考的 15-20 秒時間
+    const sentMsg = await bot.sendMessage(msg.chat.id, "🔍 正在讀取並分析內容，請稍候...");
+
+    // 3. 呼叫 Service 處理 (讀取 + AI 改寫)
     const draft = await services.processGateMessage(rawText);
+
     if (draft) {
+        // 4. 準備最終內容
         let content = draft.content;
+        
+        // 如果有圖，將圖片網址附在最後，並加上 Image Source 標記讓 Make 抓取
         if (draft.imageUrl) content += `\n\n🖼️ IMAGE_SRC: ${draft.imageUrl}`;
-        await bot.sendMessage(msg.chat.id, content, {
-            reply_to_message_id: msg.message_id,
+        // 重要：附上原始來源連結，讓 Make 路徑 C (資料庫) 可以使用
+        if (draft.sourceUrl) content += `\n🔗 SOURCE_URL: ${draft.sourceUrl}`;
+
+        // 5. [UX] 編輯原本那則「處理中」的訊息，變成最終結果 + 按鈕
+        await bot.editMessageText(content, {
+            chat_id: msg.chat.id,
+            message_id: sentMsg.message_id, // 編輯剛剛那則訊息
+            disable_web_page_preview: false, // 讓 Telegram 顯示連結預覽圖
             reply_markup: {
                 inline_keyboard: [
-                    [{ text: '🏀 體育版', callback_data: 'post_sports' }, { text: '💰 財經版', callback_data: 'post_finance' }],
+                    [
+                        { text: '🏀 體育版', callback_data: 'post_sports' }, 
+                        { text: '💰 財經版', callback_data: 'post_finance' } // 這是你目前測試通的那條路
+                    ],
                     [{ text: '💾 存入庫存', callback_data: 'save_vault' }]
                 ]
             }
         });
+    } else {
+        // 失敗時也要編輯訊息告知
+        await bot.editMessageText("⚠️ 處理失敗，無法讀取網頁或 AI 發生錯誤。", {
+            chat_id: msg.chat.id,
+            message_id: sentMsg.message_id
+        });
     }
 });
 
+// 處理按鈕點擊 (觸發 Make)
 bot.on('callback_query', async (q) => {
+    // 1. 快速回應 Telegram (停止轉圈圈)
     await bot.answerCallbackQuery(q.id, { text: '🚀 發射!' });
+
+    // 2. 解析訊息內容
     let content = q.message.text;
     let imageUrl = '';
-    const match = content.match(/🖼️ IMAGE_SRC: (.*)/);
-    if (match) { imageUrl = match[1]; content = content.replace(match[0], '').trim(); }
-    
-    await services.dispatchToMake({ target: q.data, content, imageUrl, timestamp: new Date().toISOString() });
-    await bot.editMessageText(`${content}\n\n✅ [已發射]`, { chat_id: q.message.chat.id, message_id: q.message.message_id, reply_markup: { inline_keyboard: [] } });
-});
+    let sourceUrl = '';
 
-// ============================================================================
-// === Big 2: 自動化排程 (最終版時間表) ===
-// ============================================================================
-
-// 🛠️ 共用函式
-async function runChannelMonitor(channelString, label) {
-    if(!process.env.MY_CHAT_ID) return;
-    const channels = (channelString || '').split(',');
-    
-    console.log(`[Scheduler] 執行 ${label}...`);
-
-    for (const ch of channels) {
-        if(!ch) continue;
-        const video = await services.checkChannelLatestVideo(ch.trim());
-        
-        if (video) {
-            const msg = `🚨 **${label}：新片上架**\n` +
-                        `👤 ${video.channelTitle}\n` +
-                        `📺 ${video.title}\n` +
-                        `👀 觀看數：${Number(video.viewCount).toLocaleString()}\n` +
-                        `🔗 ${video.url}\n` +
-                        `------------------------------\n` +
-                        `${video.aiAnalysis}\n` + 
-                        `------------------------------`;
-            
-            await bot.sendMessage(process.env.MY_CHAT_ID, msg);
-        }
-        await delay(10000); 
+    // 從文字中提煉出圖片與來源 (透過 Regex)
+    const imgMatch = content.match(/🖼️ IMAGE_SRC: (.*)/);
+    if (imgMatch) { 
+        imageUrl = imgMatch[1]; 
+        content = content.replace(imgMatch[0], '').trim(); // 清理掉標記
     }
-}
 
-// 🕒 [05:00] YouTube 熱門
-schedule.scheduleJob('0 21 * * *', async () => { 
-    if(!process.env.MY_CHAT_ID) return;
-    const regions = ['TW', 'JP', 'US'];
-    for (const region of regions) {
-        try {
-            console.log(`正在處理地區: ${region}`);
-            const vids = await services.getMostPopularVideos(region);
-            const flags = { 'TW': '🇹🇼', 'JP': '🇯🇵', 'US': '🇺🇸' };
-            if (vids && vids.length > 0) {
-                await bot.sendMessage(
-                    process.env.MY_CHAT_ID, 
-                    `🔥 **YouTube 熱門 - ${flags[region] || region}**\n` + vids.map(v => `• [${v.title}](${v.url})`).join('\n'), 
-                    { parse_mode: 'Markdown' }
-                );
-            }
-        } catch (innerError) { console.error(`[Error] ${region} 發生錯誤`); }
-        await delay(5000);
+    const srcMatch = content.match(/🔗 SOURCE_URL: (.*)/);
+    if (srcMatch) {
+        sourceUrl = srcMatch[1];
+        content = content.replace(srcMatch[0], '').trim(); // 清理掉標記
     }
-});
 
-// 🕒 [05:10] 大神監控 A
-schedule.scheduleJob('10 21 * * *', async () => { 
-    await runChannelMonitor(process.env.MONITOR_CHANNELS_MORNING, "☀️ 晨間頻道");
-});
+    // 3. 打包資料給 Make
+    const payload = {
+        type: q.data,          // post_finance, post_sports, save_vault
+        content: content,      // 乾淨的貼文內容
+        imageUrl: imageUrl,    // 圖片連結
+        sourceUrl: sourceUrl,  // 原始新聞連結
+        timestamp: new Date().toISOString()
+    };
 
-// 🕒 [05:30] Gemini 財經研報
-schedule.scheduleJob('30 21 * * *', function(){ 
-    console.log('[Scheduler] 啟動 💰 晨間財經...');
-    const topics = (process.env.DAILY_TOPIC_FINANCE || '').split(',');
-    services.startDailyRoutine(topics, async (result) => {
-        if(process.env.MY_CHAT_ID) {
-            await bot.sendMessage(process.env.MY_CHAT_ID, 
-                `💰 **晨間財經：${result.keyword}**\n\n${result.content}`
-            );
-        }
+    // 4. 發射 (Fire and Forget)
+    services.dispatchToMake(payload);
+
+    // 5. 更新按鈕狀態 (顯示已發射)
+    await bot.editMessageText(`${content}\n\n✅ [已發送到 ${q.data}]`, { 
+        chat_id: q.message.chat.id, 
+        message_id: q.message.message_id, 
+        reply_markup: { inline_keyboard: [] } // 移除按鈕避免重複按
     });
 });
-
-// 🕒 [06:10] 🇯🇵 日本情報 RSS (UTC 22:10)
-schedule.scheduleJob('10 22 * * *', async () => {
-    if(!process.env.MY_CHAT_ID) return;
-    const news = await services.getJPNews();
-    await sendNewsWithUX(process.env.MY_CHAT_ID, "🇯🇵", "日本焦點 (Japan Times/Today)", news);
-});
-
-// 🕒 [06:20] 🗽 美國情報 RSS (UTC 22:20)
-schedule.scheduleJob('20 22 * * *', async () => {
-    if(!process.env.MY_CHAT_ID) return;
-    const news = await services.getUSNews();
-    await sendNewsWithUX(process.env.MY_CHAT_ID, "🗽", "美國早報觀測 (NYT/Wired)", news);
-});
-
-// 🕒 [13:00] 大神監控 B
-schedule.scheduleJob('0 5 * * *', async () => { 
-    await runChannelMonitor(process.env.MONITOR_CHANNELS_AFTERNOON, "☕ 午間頻道");
-});
-
-// 🕒 [14:00] Gemini 午間綜合
-schedule.scheduleJob('0 6 * * *', function(){
-    console.log('[Scheduler] 啟動 🍱 午間綜合...');
-    const topics = (process.env.DAILY_TOPIC_TECH || '').split(',');
-    services.startDailyRoutine(topics, async (result) => {
-        if(process.env.MY_CHAT_ID) {
-            await bot.sendMessage(process.env.MY_CHAT_ID, 
-                `🍱 **午間報告：${result.keyword}**\n\n${result.content}`
-            );
-        }
-    });
-});
-
-// 🕒 [14:40] 🇬🇧 英國情報 RSS
-schedule.scheduleJob('40 6 * * *', async () => {
-    if(!process.env.MY_CHAT_ID) return;
-    const news = await services.getGBNews();
-    await sendNewsWithUX(process.env.MY_CHAT_ID, "🇬🇧", "英國 BBC 快訊", news);
-});
-
-// 🕒 [16:10] 🇫🇷 法國情報 RSS (UTC 08:10)
-schedule.scheduleJob('10 8 * * *', async () => {
-    if(!process.env.MY_CHAT_ID) return;
-    const news = await services.getFRNews();
-    await sendNewsWithUX(process.env.MY_CHAT_ID, "🇫🇷", "法國觀點 (France 24)", news);
-});
-
-// ============================================================================
-// === 🆕 Web Dashboard API ===
-// ============================================================================
-app.post('/api/rss', async (req, res) => {
-    const rssSources = [
-        { name: 'NYTimes', url: 'https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml' },
-        { name: 'BBC', url: 'http://feeds.bbci.co.uk/news/rss.xml' },
-        { name: 'Wired', url: 'https://www.wired.com/feed/rss' }
-    ];
-    const items = await services.fetchAllRSS(rssSources);
-    res.json(items);
-});
-
-app.post('/api/summarize', async (req, res) => {
-    const { url } = req.body;
-    const summary = await services.processUrl(url);
-    res.json({ summary });
-});
-
-app.post('/api/gate-draft', async (req, res) => {
-    const { text } = req.body;
-    const draft = await services.processGateMessage(text);
-    res.json(draft);
-});
-
-app.post('/api/publish', async (req, res) => {
-    await services.dispatchToMake(req.body);
-    res.json({ success: true });
-});
-
-// ✅ 手動觸發分析
-app.post('/api/trigger-daily', (req, res) => {
-    res.json({ status: 'success', message: '背景分析已啟動' });
-    const customKeywords = req.body.keywords || [];
-    services.startDailyRoutine(customKeywords, async (result) => {
-        if(process.env.MY_CHAT_ID) await bot.sendMessage(process.env.MY_CHAT_ID, `手動分析完成：${result.keyword}\n\n${result.content}`);
-    });
-});
-
-// 啟動 Server
-app.listen(port, () => console.log(`Server running on port ${port}`));
