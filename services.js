@@ -2,8 +2,8 @@
  * ==============================================================================
  * 🛠️ Info Commander Services
  * ==============================================================================
- * [Version]     1228_Final_Release_RealityCheck
- * [Feature]     YouTube Reality Prompt / Callback System / Split Schedule Support
+ * [Version]     1228_Final_Release_BBC_RSS_Added
+ * [Feature]     BBC RSS Backup / YouTube Reality Prompt / Split Schedule
  * ==============================================================================
  */
 
@@ -255,7 +255,7 @@ async function dispatchToMake(payload) {
     if (process.env.MAKE_WEBHOOK_URL) await axios.post(process.env.MAKE_WEBHOOK_URL, payload).catch(e=>{});
 }
 
-// F. RSS 讀取 (維持原樣)
+// F. RSS 讀取 (維持原樣 + 新增 BBC 模組)
 async function fetchRSS(feedUrl, sourceName) {
     try {
         const feed = await parser.parseURL(feedUrl);
@@ -275,6 +275,26 @@ async function fetchAllRSS(rssList) {
         await delay(1500);
     }
     return allItems; 
+}
+
+// 🇬🇧 [新功能] BBC RSS 轉熱搜模式 (輕量化替代方案)
+async function getBBCTrends() {
+    try {
+        console.log(`[Service] 正在抓取 BBC News (RSS) 作為熱搜替代...`);
+        // 使用已宣告的 rss-parser 實例
+        const feed = await parser.parseURL('http://feeds.bbci.co.uk/news/rss.xml');
+
+        if (feed && feed.items) {
+            // 只取前 10 條，格式化為與 Google Trends 相容的結構
+            return feed.items.slice(0, 10).map(item => ({ 
+                title: item.title 
+            }));
+        }
+        return [];
+    } catch (e) { 
+        console.log(`[BBC Error] RSS 讀取失敗: ${e.message}`);
+        return [{ title: "BBC 連線暫時異常" }]; 
+    }
 }
 
 // ============================================================================
@@ -346,5 +366,6 @@ module.exports = {
     fetchSmartImage, dispatchToMake,
     fetchRSS, fetchAllRSS,
     startDailyRoutine,
-    getQuickTrends
+    getQuickTrends,
+    getBBCTrends // 👈 已新增導出
 };

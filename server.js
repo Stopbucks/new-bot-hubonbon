@@ -3,7 +3,7 @@
  * 🛠️ Info Commander Server (Web Dashboard Edition)
  * ==============================================================================
  * [Architecture] Big 1(PDF/Web) + Big 2(Split Schedule) + Big 3(Gate)
- * [Version]      1228_Server_Final_Split
+ * [Version]      1228_Server_Final_With_BBC
  * ==============================================================================
  */
 
@@ -174,10 +174,10 @@ schedule.scheduleJob('0 22 * * *', async () => {
     } catch (e) {}
 });
 
-// 🕒 [時段五] 12:40 (TW) - 關鍵字分析 Noon (Tech/Leisure)
-// UTC 04:40 = TW 12:40
-schedule.scheduleJob('40 4 * * *', function(){
-    console.log('[Scheduler] 啟動 🍱 午間綜合...');
+// 🕒 [時段五] 14:00 (TW) - 關鍵字分析 Afternoon (Tech/Leisure)
+// UTC 06:00 = TW 14:00
+schedule.scheduleJob('0 6 * * *', function(){
+    console.log('[Scheduler] 啟動 🍱 午間綜合 (14:00)...');
     const topics = (process.env.DAILY_TOPIC_TECH || '').split(',');
     
     services.startDailyRoutine(topics, async (result) => {
@@ -201,6 +201,30 @@ schedule.scheduleJob('45 15 * * *', async () => {
     if(!process.env.MY_CHAT_ID) return;
     const content = await services.getQuickTrends('GB');
     bot.sendMessage(process.env.MY_CHAT_ID, "🇬🇧 **英國熱搜**\n" + content, {parse_mode: 'Markdown'});
+});
+
+// 🕒 [時段八] 14:40 (TW) - BBC RSS 測試 (New Feature)
+// UTC 06:40 = TW 14:40
+schedule.scheduleJob('40 6 * * *', async () => { 
+    if(!process.env.MY_CHAT_ID) return;
+    
+    console.log('[Scheduler] 啟動 🇬🇧 BBC RSS 測試...');
+    
+    try {
+        const bbcNews = await services.getBBCTrends();
+        
+        if (bbcNews && bbcNews.length > 0) {
+            const content = bbcNews.map((t, i) => `${i+1}. ${t.title}`).join('\n');
+            await bot.sendMessage(
+                process.env.MY_CHAT_ID, 
+                "🇬🇧 **英國 BBC 快訊 (RSS穩定版)**\n\n" + content
+            );
+        } else {
+             console.log('[Scheduler] BBC 回傳空資料');
+        }
+    } catch (e) {
+        console.error('[Scheduler Error] BBC 測試失敗:', e.message);
+    }
 });
 
 // ============================================================================
