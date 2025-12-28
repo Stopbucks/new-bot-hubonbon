@@ -3,7 +3,7 @@
  * 🛠️ Info Commander Server (Web Dashboard Edition)
  * ==============================================================================
  * [Architecture] Big 1(PDF/Web) + Big 2(Split Schedule) + Big 3(Gate)
- * [Version]      1228_Server_Final_Revised_Schedule
+ * [Version]      1228_Server_Final_Max_Load
  * ==============================================================================
  */
 
@@ -34,16 +34,15 @@ console.log("🚀 Commander System Online (Split Schedule Active)");
 async function sendNewsWithUX(chatId, headerEmoji, headerTitle, newsData) {
     if (!newsData || newsData.length === 0) return;
 
-    // 1. 視覺緩衝 (Visual Buffer)：先發送一個獨立的大標題/Emoji
+    // 1. 視覺緩衝
     await bot.sendMessage(chatId, `${headerEmoji} **${headerTitle}**`, { parse_mode: 'Markdown' });
-    await delay(500); // 微小延遲
+    await delay(500); 
 
-    // 2. 內容排版 (Formatting)
-    // 格式：🔹 [來源] 標題 (空兩行)
+    // 2. 內容排版
     const formattedItems = newsData.map(item => `🔹 *[${item.sourceName}]* ${item.title}`).map(str => str + "\n\n");
 
-    // 3. 分批發送 (Chunking)：每 8 則切成一塊
-    const CHUNK_SIZE = 8;
+    // 3. 分批發送 (Chunking) 🔥 每 5 則切分
+    const CHUNK_SIZE = 5; 
     for (let i = 0; i < formattedItems.length; i += CHUNK_SIZE) {
         const chunk = formattedItems.slice(i, i + CHUNK_SIZE);
         const messageBody = chunk.join('');
@@ -60,10 +59,7 @@ bot.on('message', async (msg) => {
     if (msg.chat.type !== 'private' || msg.document || !msg.text?.startsWith('http')) return;
     if (msg.text.includes('youtube.com') || msg.text.includes('youtu.be')) return;
     
-    // [Stage 1] 立即回應，防止 User 焦慮
     await bot.sendMessage(msg.chat.id, "🔍 讀取網頁中...");
-    
-    // [Stage 2] 執行分析
     const summary = await services.processUrl(msg.text);
     await bot.sendMessage(msg.chat.id, `📰 **摘要**\n\n${summary}`, { parse_mode: 'Markdown' });
 });
@@ -115,10 +111,10 @@ bot.on('callback_query', async (q) => {
 });
 
 // ============================================================================
-// === Big 2: 自動化排程 (新版時間表) ===
+// === Big 2: 自動化排程 (最終版時間表) ===
 // ============================================================================
 
-// 🛠️ 共用函式：執行頻道監控並回報 (含 AI 400字報告)
+// 🛠️ 共用函式
 async function runChannelMonitor(channelString, label) {
     if(!process.env.MY_CHAT_ID) return;
     const channels = (channelString || '').split(',');
@@ -145,7 +141,7 @@ async function runChannelMonitor(channelString, label) {
     }
 }
 
-// 🕒 [05:00] YouTube 熱門 (維持)
+// 🕒 [05:00] YouTube 熱門
 schedule.scheduleJob('0 21 * * *', async () => { 
     if(!process.env.MY_CHAT_ID) return;
     const regions = ['TW', 'JP', 'US'];
@@ -166,17 +162,15 @@ schedule.scheduleJob('0 21 * * *', async () => {
     }
 });
 
-// 🕒 [05:10] 大神監控 A (維持)
+// 🕒 [05:10] 大神監控 A
 schedule.scheduleJob('10 21 * * *', async () => { 
-    // 對應 .env: MONITOR_CHANNELS_MORNING
     await runChannelMonitor(process.env.MONITOR_CHANNELS_MORNING, "☀️ 晨間頻道");
 });
 
-// 🕒 [05:30] Gemini 財經研報 (維持)
+// 🕒 [05:30] Gemini 財經研報
 schedule.scheduleJob('30 21 * * *', function(){ 
     console.log('[Scheduler] 啟動 💰 晨間財經...');
     const topics = (process.env.DAILY_TOPIC_FINANCE || '').split(',');
-    
     services.startDailyRoutine(topics, async (result) => {
         if(process.env.MY_CHAT_ID) {
             await bot.sendMessage(process.env.MY_CHAT_ID, 
@@ -186,31 +180,29 @@ schedule.scheduleJob('30 21 * * *', function(){
     });
 });
 
-// 🕒 [06:10] 🇯🇵 日本情報 RSS (新 - UTC 22:10)
+// 🕒 [06:10] 🇯🇵 日本情報 RSS (UTC 22:10)
 schedule.scheduleJob('10 22 * * *', async () => {
     if(!process.env.MY_CHAT_ID) return;
     const news = await services.getJPNews();
     await sendNewsWithUX(process.env.MY_CHAT_ID, "🇯🇵", "日本焦點 (Japan Times/Today)", news);
 });
 
-// 🕒 [06:20] 🗽 美國情報 RSS (新 - UTC 22:20)
+// 🕒 [06:20] 🗽 美國情報 RSS (UTC 22:20)
 schedule.scheduleJob('20 22 * * *', async () => {
     if(!process.env.MY_CHAT_ID) return;
     const news = await services.getUSNews();
     await sendNewsWithUX(process.env.MY_CHAT_ID, "🗽", "美國早報觀測 (NYT/Wired)", news);
 });
 
-// 🕒 [13:00] 大神監控 B (維持)
+// 🕒 [13:00] 大神監控 B
 schedule.scheduleJob('0 5 * * *', async () => { 
-    // 對應 .env: MONITOR_CHANNELS_AFTERNOON
     await runChannelMonitor(process.env.MONITOR_CHANNELS_AFTERNOON, "☕ 午間頻道");
 });
 
-// 🕒 [14:00] Gemini 午間綜合 (維持)
+// 🕒 [14:00] Gemini 午間綜合
 schedule.scheduleJob('0 6 * * *', function(){
     console.log('[Scheduler] 啟動 🍱 午間綜合...');
     const topics = (process.env.DAILY_TOPIC_TECH || '').split(',');
-    
     services.startDailyRoutine(topics, async (result) => {
         if(process.env.MY_CHAT_ID) {
             await bot.sendMessage(process.env.MY_CHAT_ID, 
@@ -220,14 +212,14 @@ schedule.scheduleJob('0 6 * * *', function(){
     });
 });
 
-// 🕒 [14:40] 🇬🇧 英國情報 RSS (維持)
+// 🕒 [14:40] 🇬🇧 英國情報 RSS
 schedule.scheduleJob('40 6 * * *', async () => {
     if(!process.env.MY_CHAT_ID) return;
     const news = await services.getGBNews();
     await sendNewsWithUX(process.env.MY_CHAT_ID, "🇬🇧", "英國 BBC 快訊", news);
 });
 
-// 🕒 [16:10] 🇫🇷 法國情報 RSS (新 - UTC 08:10)
+// 🕒 [16:10] 🇫🇷 法國情報 RSS (UTC 08:10)
 schedule.scheduleJob('10 8 * * *', async () => {
     if(!process.env.MY_CHAT_ID) return;
     const news = await services.getFRNews();
