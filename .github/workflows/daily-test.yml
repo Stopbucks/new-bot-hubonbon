@@ -1,17 +1,41 @@
-name: Test Trigger (Discount Keyword)
+name: Daily Routine & RSS Test
 
 on:
   schedule:
-    # 台灣時間 15:50 = UTC 07:50 (注意下方縮排)
+    # 1. 原有的 AI 關鍵字測試 (15:50 TW = 07:50 UTC)
     - cron: '50 7 * * *'
+    
+    # 2. 新增：法國 RSS 測試 (17:50 TW = 09:50 UTC)
+    - cron: '50 9 * * *'
+
+    # 3. 新增：英國 RSS 測試 (18:10 TW = 10:10 UTC)
+    - cron: '10 10 * * *'
   
   # 允許手動測試
   workflow_dispatch:
 
 jobs:
-  trigger-render:
+  trigger-tasks:
     runs-on: ubuntu-latest
     steps:
-      - name: Call Render Test Route
+      - name: Check Time & Trigger Appropriate Task
         run: |
-          curl -X GET https://my-news-bot-77zr.onrender.com/test-trigger
+          current_hour=$(date +'%H')
+          echo "Current UTC Hour is: $current_hour"
+
+          if [ "$current_hour" -eq 7 ]; then
+            echo "🚀 Triggering AI Keyword Search..."
+            curl -X GET https://my-news-bot-77zr.onrender.com/test-trigger
+          
+          elif [ "$current_hour" -eq 9 ]; then
+            echo "🇫🇷 Triggering France RSS..."
+            curl -X GET "https://my-news-bot-77zr.onrender.com/rss-test?region=FR"
+            
+          elif [ "$current_hour" -eq 10 ]; then
+            echo "🇬🇧 Triggering UK RSS..."
+            curl -X GET "https://my-news-bot-77zr.onrender.com/rss-test?region=GB"
+            
+          else
+            echo "⚠️ Manual trigger detected, running default AI test..."
+            curl -X GET https://my-news-bot-77zr.onrender.com/test-trigger
+          fi

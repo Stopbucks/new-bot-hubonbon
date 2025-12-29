@@ -247,6 +247,55 @@ ${data.content}
         .then(() => console.log("✅ [Test] 搜尋任務流程結束 (等待報告產出)"))
         .catch(err => console.error("❌ [Test] 測試任務失敗:", err));
 });
+// ==========================================
+// 📡 RSS 專用測試窗口 (明天合併前的前哨戰)
+// ==========================================
+app.get('/rss-test', async (req, res) => {
+    const region = req.query.region || 'GB'; // 預設測英國
+    res.send(`📡 RSS 測試啟動：正在抓取 ${region} 地區新聞...`);
+    console.log(`📡 [RSS Test] 收到請求，目標地區：${region}`);
 
+    const TARGET_CHAT_ID = process.env.MY_CHAT_ID || '956162690'; 
+
+    try {
+        let newsItems = [];
+        let sourceName = "";
+
+        // 1. 根據參數決定抓哪一國
+        if (region === 'FR') {
+            newsItems = await services.getFRNews();
+            sourceName = "🇫🇷 法國焦點 (France 24)";
+        } else if (region === 'GB') {
+            newsItems = await services.getGBNews();
+            sourceName = "🇬🇧 英國快訊 (BBC)";
+        } else {
+            return console.log("❌ 未知的地區參數");
+        }
+
+        // 2. 檢查是否有資料
+        if (!newsItems || newsItems.length === 0) {
+            await bot.sendMessage(TARGET_CHAT_ID, `⚠️ [RSS Warning] ${sourceName} 目前抓不到任何新聞 (可能是來源暫時無法連線)`);
+            return;
+        }
+
+        // 3. 格式化訊息 (因為還沒過 Gemini，我們先用條列式呈現)
+        let message = `📰 **${sourceName} - 最新快訊**\n(原始 RSS 測試)\n\n`;
+        
+        // 只取前 8 則，避免訊息太長
+        newsItems.slice(0, 8).forEach((item, index) => {
+            message += `${index + 1}. [${item.title}](${item.link})\n\n`;
+        });
+
+        message += `---------------------------\n🤖 測試完畢，確認 RSS 管道暢通`;
+
+        // 4. 發送
+        await sendRobustMessage(TARGET_CHAT_ID, message);
+        console.log(`✅ [RSS Test] ${region} 新聞已發送`);
+
+    } catch (error) {
+        console.error("❌ RSS 測試失敗:", error);
+        bot.sendMessage(TARGET_CHAT_ID, `⚠️ RSS 測試發生錯誤: ${error.message}`).catch(()=>{});
+    }
+});
 app.get('/', (req, res) => { res.send('Info Commander is Running (Ver 1229_03 Gemini 3 - Bridge Mode)'); });
 app.listen(port, () => { console.log(`Server is running on port ${port}`); });
