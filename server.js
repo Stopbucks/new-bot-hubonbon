@@ -3,7 +3,7 @@
  * 🛠️ Info Commander Development Log
  * ==============================================================================
  * [Date]       [Version]     [Changes]
- * 2025-12-29   Ver 1229_01   Final Fix: 移除 youtubei.js，修復括號語法錯誤，加入強健發送機制。
+ * 2025-12-29   Ver 1229_03   Update: 修正 Prompt (通用社群文)，保留審核模式與強健發送。
  * ==============================================================================
  */
 require('dotenv').config();
@@ -28,11 +28,12 @@ const bot = new TelegramBot(token, { polling: true });
 const genAI = new GoogleGenerativeAI(geminiKey);
 const app = express();
 
-console.log("🚀 System Starting... (Ver 1229_01 - Stable Mode)");
+console.log("🚀 System Starting... (Ver 1229_03 - Bridge Mode)");
 
+// ✅ 修改後的 Prompt：移除特定平台限制，適用於通用社群
 const SYSTEM_PROMPT = `
 你是一位資深的「社群新聞編輯」，代號 Info Commander。
-請將用戶提供的內容（影片字幕、文章、文件）改寫為一篇「Facebook 社群深入淺出文」。
+請將用戶提供的內容（影片字幕、文章、文件）改寫為一篇「社群深入淺出文」。
 
 【寫作邏輯：倒金字塔新聞架構】
 1. **導言 (The Lead)**：第一段 (1-2句) 必須包含最重要的 5Ws (Who, What, When, Where, Why)。
@@ -56,7 +57,7 @@ const SYSTEM_PROMPT = `
 
 // --- 工具函數 ---
 
-// 1. ✅ 新增：強健發送函數 (防止崩潰 + 自動切分 + 格式容錯)
+// 1. ✅ 強健發送函數 (防止崩潰 + 自動切分 + 格式容錯)
 async function sendRobustMessage(chatId, text) {
     const MAX_LENGTH = 4000; // 保留緩衝區 (Telegram 上限 4096)
     
@@ -214,7 +215,6 @@ app.get('/test-trigger', (req, res) => {
     const TARGET_CHAT_ID = process.env.MY_CHAT_ID || '956162690'; 
 
     // 2. 定義「回調函式 (Callback)」
-    // 這就是告訴 Service：「做完不要給 Make，把資料拿回來這裡執行！」
     const reportHandler = async (data) => {
         try {
             console.log(`📥 [Server] 收到 Service 回傳的報告，準備發送至 ID: ${TARGET_CHAT_ID}...`);
@@ -230,8 +230,7 @@ ${data.content}
 🔗 **參考與來源**
 (來源圖/文: ${data.imageUrl || '無圖片'})
 `;
-            // 發送給你的 Telegram (Bridge-room)
-            // 這裡不使用 Markdown 模式以避免特殊符號導致錯誤，直接發送純文字
+            // 發送給你的 Telegram (Bridge-room) - 使用純文字避免格式錯誤
             await bot.sendMessage(TARGET_CHAT_ID, reportMessage);
             
             console.log("✅ [Server] 報告已發送至 Telegram 審核頻道");
@@ -243,12 +242,11 @@ ${data.content}
         }
     };
 
-    // 3. 啟動任務，並把上面的 handler 傳進去
-    // 這樣 Service 就會執行 callback，而不是 dispatchToMake
+    // 3. 啟動任務 (審核模式)
     services.startDailyRoutine(['AI 人工智慧'], reportHandler)
         .then(() => console.log("✅ [Test] 搜尋任務流程結束 (等待報告產出)"))
         .catch(err => console.error("❌ [Test] 測試任務失敗:", err));
 });
 
-app.get('/', (req, res) => { res.send('Info Commander is Running (Ver 1229_01 Gemini 3 - Auth Mode)'); });
+app.get('/', (req, res) => { res.send('Info Commander is Running (Ver 1229_03 Gemini 3 - Bridge Mode)'); });
 app.listen(port, () => { console.log(`Server is running on port ${port}`); });
