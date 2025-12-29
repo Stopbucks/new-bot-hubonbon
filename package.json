@@ -14,7 +14,7 @@
     "googleapis": "^169.0.0",
     "node-schedule": "^2.1.1",
     "node-telegram-bot-api": "^0.64.0",
-    "pdf-parse": "^1.1.1",
+    "pdf-parse": "^1.1.4",
     "rss-parser": "^3.13.0"
   },
   "engines": {
