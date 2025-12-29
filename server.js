@@ -200,23 +200,55 @@ bot.on('message', async (msg) => {
 });
 
 // ==========================================
-// 🧪 GitHub Action 測試專用窗口 (Test Route)
+// 🧪 GitHub Action 測試專用窗口 (Test Route) - 審核模式 (Bridge-room)
 // ==========================================
-const services = require('./services'); // 確保有引用 services
+const services = require('./services'); 
 
 app.get('/test-trigger', (req, res) => {
     // 1. Fire-and-Forget: 先立刻回應，避免 GitHub Timeout
-    res.send('🚀 測試指令已接收！正在背景執行「優惠 折價」搜尋任務...');
+    res.send('🚀 測試指令已接收！正在背景執行「AI 人工智慧」搜尋，完成後將傳送報告至 Telegram...');
 
-    console.log("🧪 [Test] 收到測試請求，開始執行單一關鍵字流程...");
+    console.log("🧪 [Test] 收到測試請求，開始執行關鍵字搜尋 (審核模式)...");
 
-    // 2. 在背景執行特定關鍵字 (不影響原本邏輯)
-    // 這裡指定關鍵字為 "優惠 折價"，用來觀察是否能抓到相關新聞或影片
-    services.startDailyRoutine(['AI 人工智慧'])
-        .then(() => console.log("✅ [Test] 測試任務執行完畢"))
+    // ✅ 設定目標 ID：優先讀取 Render 環境變數，沒有的話使用備用 ID
+    const TARGET_CHAT_ID = process.env.MY_CHAT_ID || '956162690'; 
+
+    // 2. 定義「回調函式 (Callback)」
+    // 這就是告訴 Service：「做完不要給 Make，把資料拿回來這裡執行！」
+    const reportHandler = async (data) => {
+        try {
+            console.log(`📥 [Server] 收到 Service 回傳的報告，準備發送至 ID: ${TARGET_CHAT_ID}...`);
+            
+            // 組合報告內容 (讓你好讀、好審核)
+            const reportMessage = `
+📊 **關鍵字研究報告**
+#${data.keyword}
+
+${data.content}
+
+---------------------------
+🔗 **參考與來源**
+(來源圖/文: ${data.imageUrl || '無圖片'})
+`;
+            // 發送給你的 Telegram (Bridge-room)
+            // 這裡不使用 Markdown 模式以避免特殊符號導致錯誤，直接發送純文字
+            await bot.sendMessage(TARGET_CHAT_ID, reportMessage);
+            
+            console.log("✅ [Server] 報告已發送至 Telegram 審核頻道");
+
+        } catch (err) {
+            console.error("❌ [Server] 發送報告失敗:", err.message);
+            // 嘗試發送錯誤訊息給本人
+            bot.sendMessage(TARGET_CHAT_ID, `⚠️ 報告發送失敗: ${err.message}`).catch(() => {});
+        }
+    };
+
+    // 3. 啟動任務，並把上面的 handler 傳進去
+    // 這樣 Service 就會執行 callback，而不是 dispatchToMake
+    services.startDailyRoutine(['AI 人工智慧'], reportHandler)
+        .then(() => console.log("✅ [Test] 搜尋任務流程結束 (等待報告產出)"))
         .catch(err => console.error("❌ [Test] 測試任務失敗:", err));
 });
-// ==========================================
 
 app.get('/', (req, res) => { res.send('Info Commander is Running (Ver 1229_01 Gemini 3 - Auth Mode)'); });
 app.listen(port, () => { console.log(`Server is running on port ${port}`); });
