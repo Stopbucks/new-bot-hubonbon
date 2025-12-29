@@ -10,7 +10,7 @@ require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const express = require('express');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const { Innertube, UniversalCache } = require('youtubei.js');
+//(no need) const { Innertube, UniversalCache } = require('youtubei.js');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const pdf = require('pdf-parse');
@@ -18,7 +18,7 @@ const pdf = require('pdf-parse');
 // --- 環境變數檢查 ---
 const token = process.env.TELEGRAM_TOKEN;
 const geminiKey = process.env.GEMINI_API_KEY;
-const ytCookie = process.env.YOUTUBE_COOKIE; // ✅ 新增：讀取 Cookie
+//(no need) const ytCookie = process.env.YOUTUBE_COOKIE; // ✅ 新增：讀取 Cookie
 const port = process.env.PORT || 10000;
 
 if (!token || !geminiKey) {
@@ -56,59 +56,7 @@ const SYSTEM_PROMPT = `
 `;
 
 // --- 工具函數 ---
-
-// 1. 抓取 YouTube 字幕 (Ver 1223_08: 加入 Cookie 驗證邏輯)
-async function getYouTubeContent(url) {
-    try {
-        const videoIdMatch = url.match(/(?:youtu\.be\/|youtube\.com\/(?:.*v=|.*\/)([^#&?]*))/);
-        if (!videoIdMatch) return null;
-        const videoId = videoIdMatch[1];
-        
-        console.log(`[YouTube] 正在嘗試讀取影片 (Auth Mode): ${videoId}`);
-
-        // ✅ 設定檔：如果有 Cookie 就用，沒有就嘗試匿名
-        const innerTubeConfig = {
-            cache: new UniversalCache(false),
-            generate_session_locally: true,
-            lang: 'zh-TW',
-            location: 'TW',
-            retrieve_player: false,
-            client_type: 'WEB' // 維持 WEB 模式
-        };
-
-        // ✅ 關鍵：如果 Render 環境變數有 Cookie，則注入
-        if (ytCookie) {
-            console.log("ℹ️ 偵測到 Cookie，正在進行身份驗證請求...");
-            innerTubeConfig.cookie = ytCookie;
-        }
-
-        const youtube = await Innertube.create(innerTubeConfig);
-
-        const info = await youtube.getInfo(videoId);
-        const transcriptData = await info.getTranscript();
-        
-        if (transcriptData && transcriptData.transcript && transcriptData.transcript.content) {
-             const fullText = transcriptData.transcript.content.body.initial_segments
-                .map(segment => segment.snippet.text)
-                .join(' ');
-             console.log(`[YouTube] 字幕讀取成功，長度: ${fullText.length}`);
-             return fullText;
-        }
-        
-        throw new Error("找不到可用的字幕軌道");
-
-    } catch (error) {
-        console.error("YouTube 讀取失敗詳細資訊:", error);
-        if (error.message.includes('400') || error.message.includes('Precondition')) {
-            throw new Error("YouTube 拒絕連線 (400)。建議檢查 .env 中的 YOUTUBE_COOKIE 是否過期或正確。");
-        }
-        if (error.message.includes('Sign in')) {
-            throw new Error("此影片需要登入才能觀看 (Age restriction 等)，請設定 Cookie。");
-        }
-        throw new Error("無法讀取影片字幕，請確認影片非私人或會員限定。");
-    }
-}
-
+// 1. 抓取 YouTube 字幕 (Ver 1223_08: 加入 Cookie 驗證邏輯)：no need / delete
 // 2. 爬取網頁文章
 async function getWebContent(url) {
     try {
@@ -172,13 +120,10 @@ bot.on('message', async (msg) => {
             revisionInstruction = text;
         } 
         else if (text && (text.startsWith('http') || text.startsWith('www'))) {
-            if (text.includes('youtube.com') || text.includes('youtu.be')) {
-                bot.sendMessage(chatId, "🎥 偵測到影片，使用身份驗證模式讀取字幕... (Ver 1223_08)");
-                inputData = await getYouTubeContent(text);
-            } else {
-                bot.sendMessage(chatId, "🌐 偵測到連結，正在爬取網頁... (Ver 1223_08)");
-                inputData = await getWebContent(text);
-            }
+            // 直接當作普通網頁處理
+            bot.sendMessage(chatId, "🌐 偵測到連結，正在爬取網頁...");
+            inputData = await getWebContent(text);
+        }
         }
         else if (msg.document) {
             const mime = msg.document.mime_type;
