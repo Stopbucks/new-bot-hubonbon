@@ -9,6 +9,7 @@
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "axios": "^1.13.2",
+    "cheerio": "^1.1.2",
     "dotenv": "^16.6.1",
     "express": "^4.22.1",
     "googleapis": "^169.0.0",
