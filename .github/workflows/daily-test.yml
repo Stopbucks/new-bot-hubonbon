@@ -1,0 +1,17 @@
+name: Test Trigger (Discount Keyword)
+
+on:
+  schedule:
+    # 台灣時間 12:10 PM = UTC 04:10
+    - cron: '10 4 * * *'
+  
+  # 允許手動測試
+  workflow_dispatch:
+
+jobs:
+  trigger-render:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call Render Test Route
+        run: |
+          curl -X GET https://my-news-bot-77zr.onrender.com/test-trigger
