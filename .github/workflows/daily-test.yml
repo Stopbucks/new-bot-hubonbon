@@ -2,9 +2,9 @@ name: Test Trigger (Discount Keyword)
 
 on:
   schedule:
-    # 台灣時間 12:10 PM = UTC 04:10
-- cron: '20 7 * * *'
-
+    # 台灣時間 15:50 = UTC 07:50 (注意下方縮排)
+    - cron: '50 7 * * *'
+  
   # 允許手動測試
   workflow_dispatch:
 
