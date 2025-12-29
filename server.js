@@ -3,14 +3,13 @@
  * 🛠️ Info Commander Development Log
  * ==============================================================================
  * [Date]       [Version]     [Changes]
- * 2025-12-23   Ver 1223_08   Critical Fix: 增加 Cookie 驗證機制，解決 400 Precondition 錯誤。
+ * 2025-12-29   Ver 1229_01   Final Fix: 移除 youtubei.js，修復括號語法錯誤，加入強健發送機制。
  * ==============================================================================
  */
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const express = require('express');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-//(no need) const { Innertube, UniversalCache } = require('youtubei.js');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const pdf = require('pdf-parse');
@@ -18,7 +17,6 @@ const pdf = require('pdf-parse');
 // --- 環境變數檢查 ---
 const token = process.env.TELEGRAM_TOKEN;
 const geminiKey = process.env.GEMINI_API_KEY;
-//(no need) const ytCookie = process.env.YOUTUBE_COOKIE; // ✅ 新增：讀取 Cookie
 const port = process.env.PORT || 10000;
 
 if (!token || !geminiKey) {
@@ -30,7 +28,7 @@ const bot = new TelegramBot(token, { polling: true });
 const genAI = new GoogleGenerativeAI(geminiKey);
 const app = express();
 
-console.log("🚀 System Starting... (Ver 1223_08 - Auth Mode)");
+console.log("🚀 System Starting... (Ver 1229_01 - Stable Mode)");
 
 const SYSTEM_PROMPT = `
 你是一位資深的「社群新聞編輯」，代號 Info Commander。
@@ -43,20 +41,50 @@ const SYSTEM_PROMPT = `
 
 【格式規範 - 嚴格執行】
 1. **標題**：第一行必須使用 "  ▌ " 開頭 (例如：  ▌ 標題內容)。風格需具吸引力或反差感。
-2. **字體**：**嚴禁使用粗體** (不要使用 Markdown ** bold)。
-3. **排版**：
+2. **字體**：**嚴禁使用粗體** (不要使用 Markdown ** bold)，以免影響發送格式。
+3. **字數限制**：整篇文章請嚴格控制在 **1000 個中文字以內**。
+4. **排版**：
    - 段落之間必須空一行。
    - 每段控制在 1-3 句話，保持閱讀節奏輕快。
    - 適度使用 Emoji 進行視覺分隔。
-4. **引用**：所有參考來源連結，統一整理在文章最後一段。
-5. **語言**：無論輸入語言為何，輸出結果一律為「繁體中文 (Traditional Chinese)」。
+5. **引用**：所有參考來源連結，統一整理在文章最後一段。
+6. **語言**：無論輸入語言為何，輸出結果一律為「繁體中文 (Traditional Chinese)」。
 
 【互動修改 (Editing Loop)】
 - 若用戶提供了「修改指令」(例如：改標題、縮短字數)，請保留原文章架構，僅根據指令進行修正。
 `;
 
 // --- 工具函數 ---
-// 1. 抓取 YouTube 字幕 (Ver 1223_08: 加入 Cookie 驗證邏輯)：no need / delete
+
+// 1. ✅ 新增：強健發送函數 (防止崩潰 + 自動切分 + 格式容錯)
+async function sendRobustMessage(chatId, text) {
+    const MAX_LENGTH = 4000; // 保留緩衝區 (Telegram 上限 4096)
+    
+    // A. 切分訊息 (如果太長)
+    const chunks = [];
+    for (let i = 0; i < text.length; i += MAX_LENGTH) {
+        chunks.push(text.substring(i, i + MAX_LENGTH));
+    }
+
+    // B. 逐段發送
+    for (const chunk of chunks) {
+        try {
+            // 優先嘗試：使用 Markdown 發送 (為了排版漂亮)
+            await bot.sendMessage(chatId, chunk, { parse_mode: 'Markdown' });
+        } catch (error) {
+            console.warn(`[Send Warning] Markdown 發送失敗，轉為純文字重試: ${error.message}`);
+            try {
+                // 備用方案：如果 Markdown 報錯 (例如符號未閉合)，改用純文字再送一次
+                await bot.sendMessage(chatId, chunk); 
+            } catch (fatalError) {
+                console.error(`[Send Failed] 純文字發送也失敗，放棄此段落: ${fatalError.message}`);
+            }
+        }
+        // 稍微休息一下，避免連續發送被 Telegram 擋
+        await new Promise(r => setTimeout(r, 300));
+    }
+}
+
 // 2. 爬取網頁文章
 async function getWebContent(url) {
     try {
@@ -106,31 +134,36 @@ bot.on('message', async (msg) => {
     const text = msg.text;
 
     if (!text && !msg.document) return;
-    bot.sendChatAction(chatId, 'typing');
+    
+    // 為了 UX，送出 typing 狀態 (但加上 catch 避免非致命錯誤)
+    bot.sendChatAction(chatId, 'typing').catch(() => {});
 
     try {
         let inputData = "";
         let isRevision = false;
         let revisionInstruction = "";
 
+        // 1. 判斷是否為「修改指令」 (Reply 模式)
         if (msg.reply_to_message && msg.reply_to_message.from.id === bot.id) {
             console.log(`[Revision] 用戶要求修改文章`);
             inputData = msg.reply_to_message.text;
             isRevision = true;
             revisionInstruction = text;
         } 
+        // 2. 判斷是否為「連結」 (HTTP / WWW)
         else if (text && (text.startsWith('http') || text.startsWith('www'))) {
-            // 直接當作普通網頁處理
+            // ✅ 不管是否為 YouTube，一律當作網頁爬取 (移除 youtubei.js 依賴)
             bot.sendMessage(chatId, "🌐 偵測到連結，正在爬取網頁...");
             inputData = await getWebContent(text);
         }
-        }
+        // 3. 判斷是否為「文件」 (PDF / TXT)
         else if (msg.document) {
             const mime = msg.document.mime_type;
             if (mime === 'application/pdf' || mime === 'text/plain') {
                 bot.sendMessage(chatId, "📄 收到文件，正在解析內容...");
                 const fileLink = await bot.getFileLink(msg.document.file_id);
                 const response = await axios({ url: fileLink, method: 'GET', responseType: 'arraybuffer' });
+                
                 if (mime === 'application/pdf') {
                     const data = await pdf(response.data);
                     inputData = data.text;
@@ -141,14 +174,18 @@ bot.on('message', async (msg) => {
                 return bot.sendMessage(chatId, "⚠️ 目前僅支援 PDF 與 TXT 文件格式。");
             }
         }
+        // 4. 純文字輸入
         else if (!isRevision) {
              inputData = text;
         }
 
         if (!inputData) return bot.sendMessage(chatId, "❌ 無法提取內容。");
 
+        // 呼叫 Gemini
         const responseText = await callGemini(inputData, isRevision, revisionInstruction);
-        await bot.sendMessage(chatId, responseText);
+        
+        // ✅ 使用強健發送函式 (避免崩潰)
+        await sendRobustMessage(chatId, responseText);
         console.log(`[Success] 回應已發送 (ChatID: ${chatId})`);
 
     } catch (error) {
@@ -156,7 +193,9 @@ bot.on('message', async (msg) => {
         let errorMsg = error.message;
         if (errorMsg.includes('404')) errorMsg = "權限錯誤 (404) - 您的帳號似乎不支援此模型";
         if (errorMsg.includes('409')) errorMsg = "系統忙碌中 (Conflict) - 請稍後再試";
-        bot.sendMessage(chatId, `⚠️ 發生錯誤：${errorMsg}`);
+        
+        // 這裡也要 catch 住，防止死鎖
+        bot.sendMessage(chatId, `⚠️ 發生錯誤：${errorMsg}`).catch(() => {});
     }
 });
 
@@ -178,5 +217,6 @@ app.get('/test-trigger', (req, res) => {
         .catch(err => console.error("❌ [Test] 測試任務失敗:", err));
 });
 // ==========================================
-app.get('/', (req, res) => { res.send('Info Commander is Running (Ver 1223_08 Gemini 3 - Auth Mode)'); });
+
+app.get('/', (req, res) => { res.send('Info Commander is Running (Ver 1229_01 Gemini 3 - Auth Mode)'); });
 app.listen(port, () => { console.log(`Server is running on port ${port}`); });
