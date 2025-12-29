@@ -1,197 +1,237 @@
 /**
  * ==============================================================================
- * 🛠️ Info Commander Server (Final Integration)
+ * 🛠️ Info Commander Development Log
  * ==============================================================================
- * [Architecture] Big 1(Read) + Big 3(Gate/Make) + Big 2(Active Schedule)
- * [Version]      1229_Final_Restore
+ * [Date]       [Version]     [Changes]
+ * 2025-12-23   Ver 1223_08   Critical Fix: 增加 Cookie 驗證機制，解決 400 Precondition 錯誤。
  * ==============================================================================
  */
-
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const express = require('express');
-const schedule = require('node-schedule');
-const services = require('./services');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { Innertube, UniversalCache } = require('youtubei.js');
+const axios = require('axios');
+const cheerio = require('cheerio');
+const pdf = require('pdf-parse');
 
-// 1. 初始化設定
-const bot = new TelegramBot(process.env.TELEGRAM_TOKEN, { polling: true });
-bot.on('polling_error', (e) => console.log(`[Polling Error] ${e.code}`));
-
-const app = express();
+// --- 環境變數檢查 ---
+const token = process.env.TELEGRAM_TOKEN;
+const geminiKey = process.env.GEMINI_API_KEY;
+const ytCookie = process.env.YOUTUBE_COOKIE; // ✅ 新增：讀取 Cookie
 const port = process.env.PORT || 10000;
-const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-// Middleware
-app.use(express.json());
-app.use(express.static('public'));
-
-console.log("🚀 Commander System Online (Full Capability Restored)");
-
-// ============================================================================
-// === UX 輔助函式 ===
-// ============================================================================
-async function sendNewsWithUX(chatId, headerEmoji, headerTitle, newsData) {
-    if (!newsData || newsData.length === 0) return;
-    await bot.sendMessage(chatId, `${headerEmoji} **${headerTitle}**`, { parse_mode: 'Markdown' });
-    await delay(500); 
-    const formattedItems = newsData.map(item => `🔹 *[${item.sourceName}]* ${item.title}`).map(str => str + "\n\n");
-    const CHUNK_SIZE = 5; 
-    for (let i = 0; i < formattedItems.length; i += CHUNK_SIZE) {
-        const chunk = formattedItems.slice(i, i + CHUNK_SIZE);
-        await bot.sendMessage(chatId, chunk.join(''), { parse_mode: 'Markdown' });
-        await delay(300);
-    }
+if (!token || !geminiKey) {
+    console.error("❌ 錯誤：請確認 .env 或 Render 環境變數中包含 TELEGRAM_TOKEN 與 GEMINI_API_KEY");
+    process.exit(1);
 }
 
-async function runChannelMonitor(channelString, label) {
-    if(!process.env.MY_CHAT_ID) return;
-    const channels = (channelString || '').split(',');
-    console.log(`[Scheduler] 執行 ${label}...`);
-    for (const ch of channels) {
-        if(!ch) continue;
-        const video = await services.checkChannelLatestVideo(ch.trim());
-        if (video) {
-            const msg = `🚨 **${label}：新片上架**\n` +
-                        `👤 ${video.channelTitle}\n` +
-                        `📺 ${video.title}\n` +
-                        `🔗 ${video.url}\n` +
-                        `------------------------------\n` +
-                        `${video.aiAnalysis}\n`;
-            await bot.sendMessage(process.env.MY_CHAT_ID, msg);
+const bot = new TelegramBot(token, { polling: true });
+const genAI = new GoogleGenerativeAI(geminiKey);
+const app = express();
+
+console.log("🚀 System Starting... (Ver 1223_08 - Auth Mode)");
+
+const SYSTEM_PROMPT = `
+你是一位資深的「社群新聞編輯」，代號 Info Commander。
+請將用戶提供的內容（影片字幕、文章、文件）改寫為一篇「Facebook 社群深入淺出文」。
+
+【寫作邏輯：倒金字塔新聞架構】
+1. **導言 (The Lead)**：第一段 (1-2句) 必須包含最重要的 5Ws (Who, What, When, Where, Why)。
+2. **堅果段 (Nut Graf)**：第二段解釋「為什麼讀者要在意？」，建立與讀者的利益共鳴。
+3. **內文排序**：後續細節按「重要性」排序，而非時間順序。
+
+【格式規範 - 嚴格執行】
+1. **標題**：第一行必須使用 "  ▌ " 開頭 (例如：  ▌ 標題內容)。風格需具吸引力或反差感。
+2. **字體**：**嚴禁使用粗體** (不要使用 Markdown ** bold)。
+3. **排版**：
+   - 段落之間必須空一行。
+   - 每段控制在 1-3 句話，保持閱讀節奏輕快。
+   - 適度使用 Emoji 進行視覺分隔。
+4. **引用**：所有參考來源連結，統一整理在文章最後一段。
+5. **語言**：無論輸入語言為何，輸出結果一律為「繁體中文 (Traditional Chinese)」。
+
+【互動修改 (Editing Loop)】
+- 若用戶提供了「修改指令」(例如：改標題、縮短字數)，請保留原文章架構，僅根據指令進行修正。
+`;
+
+// --- 工具函數 ---
+
+// 1. 抓取 YouTube 字幕 (Ver 1223_08: 加入 Cookie 驗證邏輯)
+async function getYouTubeContent(url) {
+    try {
+        const videoIdMatch = url.match(/(?:youtu\.be\/|youtube\.com\/(?:.*v=|.*\/)([^#&?]*))/);
+        if (!videoIdMatch) return null;
+        const videoId = videoIdMatch[1];
+        
+        console.log(`[YouTube] 正在嘗試讀取影片 (Auth Mode): ${videoId}`);
+
+        // ✅ 設定檔：如果有 Cookie 就用，沒有就嘗試匿名
+        const innerTubeConfig = {
+            cache: new UniversalCache(false),
+            generate_session_locally: true,
+            lang: 'zh-TW',
+            location: 'TW',
+            retrieve_player: false,
+            client_type: 'WEB' // 維持 WEB 模式
+        };
+
+        // ✅ 關鍵：如果 Render 環境變數有 Cookie，則注入
+        if (ytCookie) {
+            console.log("ℹ️ 偵測到 Cookie，正在進行身份驗證請求...");
+            innerTubeConfig.cookie = ytCookie;
         }
-        await delay(10000); 
+
+        const youtube = await Innertube.create(innerTubeConfig);
+
+        const info = await youtube.getInfo(videoId);
+        const transcriptData = await info.getTranscript();
+        
+        if (transcriptData && transcriptData.transcript && transcriptData.transcript.content) {
+             const fullText = transcriptData.transcript.content.body.initial_segments
+                .map(segment => segment.snippet.text)
+                .join(' ');
+             console.log(`[YouTube] 字幕讀取成功，長度: ${fullText.length}`);
+             return fullText;
+        }
+        
+        throw new Error("找不到可用的字幕軌道");
+
+    } catch (error) {
+        console.error("YouTube 讀取失敗詳細資訊:", error);
+        if (error.message.includes('400') || error.message.includes('Precondition')) {
+            throw new Error("YouTube 拒絕連線 (400)。建議檢查 .env 中的 YOUTUBE_COOKIE 是否過期或正確。");
+        }
+        if (error.message.includes('Sign in')) {
+            throw new Error("此影片需要登入才能觀看 (Age restriction 等)，請設定 Cookie。");
+        }
+        throw new Error("無法讀取影片字幕，請確認影片非私人或會員限定。");
     }
 }
 
-// ============================================================================
-// === Big 1: Bridge-room (主動閱讀) ===
-// ============================================================================
-bot.on('message', async (msg) => {
-    if (msg.chat.type !== 'private' || msg.document || !msg.text?.startsWith('http')) return;
-    if (msg.text.includes('youtube.com') || msg.text.includes('youtu.be')) return;
-    
-    await bot.sendMessage(msg.chat.id, "🔍 讀取網頁中...");
-    const summary = await services.processUrl(msg.text);
-    await bot.sendMessage(msg.chat.id, `📰 **摘要**\n\n${summary}`, { parse_mode: 'Markdown' });
-});
-
-bot.on('document', async (msg) => {
-    if (msg.chat.type === 'private' && msg.document.mime_type?.includes('pdf')) {
-        await bot.sendMessage(msg.chat.id, "📄 讀取 PDF 中...");
-        try {
-            const link = await bot.getFileLink(msg.document.file_id);
-            const summary = await services.processPDF(link);
-            await bot.sendMessage(msg.chat.id, summary, { parse_mode: 'Markdown' });
-        } catch (e) { await bot.sendMessage(msg.chat.id, "❌ 失敗"); }
-    }
-});
-
-// ============================================================================
-// === Big 3: Gate-Room (社群發布 & Make) ===
-// ============================================================================
-bot.on('channel_post', async (msg) => {
-    if (process.env.GATE_CHANNEL_ID && String(msg.chat.id) !== String(process.env.GATE_CHANNEL_ID)) return;
-    const rawText = msg.text || msg.caption;
-    if (!rawText) return;
-
-    const sentMsg = await bot.sendMessage(msg.chat.id, "🔍 正在讀取並分析內容，請稍候...");
-    const draft = await services.processGateMessage(rawText);
-
-    if (draft) {
-        let content = draft.content;
-        if (draft.imageUrl) content += `\n\n🖼️ IMAGE_SRC: ${draft.imageUrl}`;
-        if (draft.sourceUrl) content += `\n🔗 SOURCE_URL: ${draft.sourceUrl}`;
-
-        await bot.editMessageText(content, {
-            chat_id: msg.chat.id,
-            message_id: sentMsg.message_id,
-            disable_web_page_preview: false, 
-            reply_markup: {
-                inline_keyboard: [
-                    [{ text: '🏀 體育版', callback_data: 'post_sports' }, { text: '💰 財經版', callback_data: 'post_finance' }],
-                    [{ text: '💾 存入庫存', callback_data: 'save_vault' }]
-                ]
-            }
+// 2. 爬取網頁文章
+async function getWebContent(url) {
+    try {
+        const { data } = await axios.get(url, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
         });
+        const $ = cheerio.load(data);
+        $('script, style, nav, footer, header, .ads, .advertisement').remove();
+        let content = $('article').text().trim() || $('body').text().trim();
+        return content.replace(/\s+/g, ' ').substring(0, 15000);
+    } catch (error) {
+        throw new Error("無法讀取網頁內容 (可能網站有阻擋爬蟲)");
+    }
+}
+
+// 3. Gemini 生成邏輯
+async function callGemini(userContent, isRevision = false, revisionInstruction = "") {
+    const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
+
+    let finalPrompt = "";
+    if (isRevision) {
+        finalPrompt = `
+        ${SYSTEM_PROMPT}
+        【任務：修改文章】
+        原始文章內容：
+        ${userContent}
+        用戶的修改指令：
+        ${revisionInstruction}
+        請根據修改指令重寫文章，並嚴格遵守上述格式規範。
+        `;
     } else {
-        await bot.editMessageText("⚠️ 處理失敗。", { chat_id: msg.chat.id, message_id: sentMsg.message_id });
+        finalPrompt = `
+        ${SYSTEM_PROMPT}
+        【任務：撰寫新文章】
+        請閱讀以下素材內容，並撰寫貼文：
+        ${userContent}
+        `;
     }
-});
 
-bot.on('callback_query', async (q) => {
-    await bot.answerCallbackQuery(q.id, { text: '🚀 發射!' });
-    let content = q.message.text;
-    let imageUrl = '', sourceUrl = '';
+    const result = await model.generateContent(finalPrompt);
+    return result.response.text();
+}
 
-    const imgMatch = content.match(/🖼️ IMAGE_SRC: (.*)/);
-    if (imgMatch) { imageUrl = imgMatch[1]; content = content.replace(imgMatch[0], '').trim(); }
-    
-    const srcMatch = content.match(/🔗 SOURCE_URL: (.*)/);
-    if (srcMatch) { sourceUrl = srcMatch[1]; content = content.replace(srcMatch[0], '').trim(); }
+// --- 機器人事件監聽 ---
+bot.on('message', async (msg) => {
+    const chatId = msg.chat.id;
+    const text = msg.text;
 
-    services.dispatchToMake({
-        type: q.data, content, imageUrl, sourceUrl, timestamp: new Date().toISOString()
-    });
+    if (!text && !msg.document) return;
+    bot.sendChatAction(chatId, 'typing');
 
-    await bot.editMessageText(`${content}\n\n✅ [已發送到 ${q.data}]`, { 
-        chat_id: q.message.chat.id, message_id: q.message.message_id, reply_markup: { inline_keyboard: [] } 
-    });
-});
+    try {
+        let inputData = "";
+        let isRevision = false;
+        let revisionInstruction = "";
 
-// ============================================================================
-// === Big 2: 自動化排程 (功能回歸) ===
-// ============================================================================
-
-// 🕒 [21:00 UTC] YouTube 熱門
-schedule.scheduleJob('0 21 * * *', async () => { 
-    if(!process.env.MY_CHAT_ID) return;
-    const regions = ['TW', 'JP', 'US'];
-    for (const region of regions) {
-        const vids = await services.getMostPopularVideos(region);
-        if (vids.length > 0) {
-            await bot.sendMessage(process.env.MY_CHAT_ID, `🔥 **YT 熱門 ${region}**\n` + vids.map(v => `• [${v.title}](${v.url})`).join('\n'), { parse_mode: 'Markdown' });
+        if (msg.reply_to_message && msg.reply_to_message.from.id === bot.id) {
+            console.log(`[Revision] 用戶要求修改文章`);
+            inputData = msg.reply_to_message.text;
+            isRevision = true;
+            revisionInstruction = text;
+        } 
+        else if (text && (text.startsWith('http') || text.startsWith('www'))) {
+            if (text.includes('youtube.com') || text.includes('youtu.be')) {
+                bot.sendMessage(chatId, "🎥 偵測到影片，使用身份驗證模式讀取字幕... (Ver 1223_08)");
+                inputData = await getYouTubeContent(text);
+            } else {
+                bot.sendMessage(chatId, "🌐 偵測到連結，正在爬取網頁... (Ver 1223_08)");
+                inputData = await getWebContent(text);
+            }
         }
-        await delay(5000);
+        else if (msg.document) {
+            const mime = msg.document.mime_type;
+            if (mime === 'application/pdf' || mime === 'text/plain') {
+                bot.sendMessage(chatId, "📄 收到文件，正在解析內容...");
+                const fileLink = await bot.getFileLink(msg.document.file_id);
+                const response = await axios({ url: fileLink, method: 'GET', responseType: 'arraybuffer' });
+                if (mime === 'application/pdf') {
+                    const data = await pdf(response.data);
+                    inputData = data.text;
+                } else {
+                    inputData = response.data.toString('utf-8');
+                }
+            } else {
+                return bot.sendMessage(chatId, "⚠️ 目前僅支援 PDF 與 TXT 文件格式。");
+            }
+        }
+        else if (!isRevision) {
+             inputData = text;
+        }
+
+        if (!inputData) return bot.sendMessage(chatId, "❌ 無法提取內容。");
+
+        const responseText = await callGemini(inputData, isRevision, revisionInstruction);
+        await bot.sendMessage(chatId, responseText);
+        console.log(`[Success] 回應已發送 (ChatID: ${chatId})`);
+
+    } catch (error) {
+        console.error("處理錯誤:", error);
+        let errorMsg = error.message;
+        if (errorMsg.includes('404')) errorMsg = "權限錯誤 (404) - 您的帳號似乎不支援此模型";
+        if (errorMsg.includes('409')) errorMsg = "系統忙碌中 (Conflict) - 請稍後再試";
+        bot.sendMessage(chatId, `⚠️ 發生錯誤：${errorMsg}`);
     }
 });
 
-// 🕒 [21:10 UTC] 晨間頻道監控
-schedule.scheduleJob('10 21 * * *', async () => { await runChannelMonitor(process.env.MONITOR_CHANNELS_MORNING, "☀️ 晨間頻道"); });
+// ==========================================
+// 🧪 GitHub Action 測試專用窗口 (Test Route)
+// ==========================================
+const services = require('./services'); // 確保有引用 services
 
-// 🕒 [21:30 UTC] 晨間財經研報
-schedule.scheduleJob('30 21 * * *', function(){ 
-    const topics = (process.env.DAILY_TOPIC_FINANCE || '').split(',');
-    services.startDailyRoutine(topics, async (result) => {
-        if(process.env.MY_CHAT_ID) await bot.sendMessage(process.env.MY_CHAT_ID, `💰 **晨間財經：${result.keyword}**\n\n${result.content}`);
-    });
+app.get('/test-trigger', (req, res) => {
+    // 1. Fire-and-Forget: 先立刻回應，避免 GitHub Timeout
+    res.send('🚀 測試指令已接收！正在背景執行「優惠 折價」搜尋任務...');
+
+    console.log("🧪 [Test] 收到測試請求，開始執行單一關鍵字流程...");
+
+    // 2. 在背景執行特定關鍵字 (不影響原本邏輯)
+    // 這裡指定關鍵字為 "優惠 折價"，用來觀察是否能抓到相關新聞或影片
+    services.startDailyRoutine(['優惠 折價'])
+        .then(() => console.log("✅ [Test] 測試任務執行完畢"))
+        .catch(err => console.error("❌ [Test] 測試任務失敗:", err));
 });
-
-// 🕒 [22:10 UTC] 日本/美國情報
-schedule.scheduleJob('10 22 * * *', async () => { if(process.env.MY_CHAT_ID) sendNewsWithUX(process.env.MY_CHAT_ID, "🇯🇵", "日本焦點", await services.getJPNews()); });
-schedule.scheduleJob('20 22 * * *', async () => { if(process.env.MY_CHAT_ID) sendNewsWithUX(process.env.MY_CHAT_ID, "🗽", "美國早報", await services.getUSNews()); });
-
-// 🕒 [05:00 UTC] 午間監控
-schedule.scheduleJob('0 5 * * *', async () => { await runChannelMonitor(process.env.MONITOR_CHANNELS_AFTERNOON, "☕ 午間頻道"); });
-
-// 🕒 [06:00 UTC] 午間報告
-schedule.scheduleJob('0 6 * * *', function(){
-    const topics = (process.env.DAILY_TOPIC_TECH || '').split(',');
-    services.startDailyRoutine(topics, async (result) => {
-        if(process.env.MY_CHAT_ID) await bot.sendMessage(process.env.MY_CHAT_ID, `🍱 **午間報告：${result.keyword}**\n\n${result.content}`);
-    });
-});
-
-// 🕒 [06:40 UTC] 英國/法國情報
-schedule.scheduleJob('40 6 * * *', async () => { if(process.env.MY_CHAT_ID) sendNewsWithUX(process.env.MY_CHAT_ID, "🇬🇧", "英國快訊", await services.getGBNews()); });
-schedule.scheduleJob('10 8 * * *', async () => { if(process.env.MY_CHAT_ID) sendNewsWithUX(process.env.MY_CHAT_ID, "🇫🇷", "法國觀點", await services.getFRNews()); });
-
-// ============================================================================
-// === Web Dashboard API ===
-// ============================================================================
-app.post('/api/rss', async (req, res) => { res.json(await services.fetchAllRSS([{name:'BBC',url:'http://feeds.bbci.co.uk/news/rss.xml'}])); });
-app.post('/api/summarize', async (req, res) => { res.json({ summary: await services.processUrl(req.body.url) }); });
-app.post('/api/gate-draft', async (req, res) => { res.json(await services.processGateMessage(req.body.text)); });
-app.post('/api/publish', async (req, res) => { await services.dispatchToMake(req.body); res.json({ success: true }); });
-
-// 啟動 Server
-app.listen(port, () => console.log(`Server running on port ${port}`));
+// ==========================================
+app.get('/', (req, res) => { res.send('Info Commander is Running (Ver 1223_08 Gemini 3 - Auth Mode)'); });
+app.listen(port, () => { console.log(`Server is running on port ${port}`); });
