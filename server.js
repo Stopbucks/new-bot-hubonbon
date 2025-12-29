@@ -100,7 +100,8 @@ bot.on('callback_query', async (callbackQuery) => {
 bot.on('message', async (msg) => {
     const chatId = msg.chat.id.toString();
     const text = msg.text;
-    
+// 📢 新增這行：印出 ID 讓我在 Render Logs 看到
+    console.log(`📡 [Debug] 收到訊息 | 來源 ID: ${chatId} | 內容: ${text ? text.substring(0, 10) : '非文字'}`);    
     if (msg.from.is_bot) return; // 忽略機器人自己
 
     // --- 判斷目前在哪個房間 ---
