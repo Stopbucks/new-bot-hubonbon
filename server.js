@@ -1,16 +1,18 @@
 /**
  * ==============================================================================
- * 🛠️ Info Commander Development Log
+ * 🛠️ Info Commander Server (Stable Restore Version)
  * ==============================================================================
- * [Date]       [Version]     [Changes]
- * 2025-12-23   Ver 1223_08   Critical Fix: 增加 Cookie 驗證機制，解決 400 Precondition 錯誤。
+ * [Based on Commit]: Remove youtubei.js and cleanup server.js
+ * [Feature]: 
+ * 1. Gate Room (URL Summary) - Active
+ * 2. PDF Reading - Active
+ * 3. No youtubei.js dependency (Fixes Render Crash)
  * ==============================================================================
  */
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const express = require('express');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-//(no need) const { Innertube, UniversalCache } = require('youtubei.js');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const pdf = require('pdf-parse');
@@ -18,7 +20,6 @@ const pdf = require('pdf-parse');
 // --- 環境變數檢查 ---
 const token = process.env.TELEGRAM_TOKEN;
 const geminiKey = process.env.GEMINI_API_KEY;
-//(no need) const ytCookie = process.env.YOUTUBE_COOKIE; // ✅ 新增：讀取 Cookie
 const port = process.env.PORT || 10000;
 
 if (!token || !geminiKey) {
@@ -30,7 +31,7 @@ const bot = new TelegramBot(token, { polling: true });
 const genAI = new GoogleGenerativeAI(geminiKey);
 const app = express();
 
-console.log("🚀 System Starting... (Ver 1223_08 - Auth Mode)");
+console.log("🚀 System Starting... (Stable Restore Version)");
 
 const SYSTEM_PROMPT = `
 你是一位資深的「社群新聞編輯」，代號 Info Commander。
@@ -56,8 +57,8 @@ const SYSTEM_PROMPT = `
 `;
 
 // --- 工具函數 ---
-// 1. 抓取 YouTube 字幕 (Ver 1223_08: 加入 Cookie 驗證邏輯)：no need / delete
-// 2. 爬取網頁文章
+
+// 1. 爬取網頁文章 (Gate Room 核心功能)
 async function getWebContent(url) {
     try {
         const { data } = await axios.get(url, {
@@ -72,10 +73,9 @@ async function getWebContent(url) {
     }
 }
 
-// 3. Gemini 生成邏輯
+// 2. Gemini 生成邏輯
 async function callGemini(userContent, isRevision = false, revisionInstruction = "") {
-    const model = genAI.getGenerativeModel({ model: "gemini-3-flash-preview" });
-
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" }); // 使用穩定模型
     let finalPrompt = "";
     if (isRevision) {
         finalPrompt = `
@@ -106,6 +106,10 @@ bot.on('message', async (msg) => {
     const text = msg.text;
 
     if (!text && !msg.document) return;
+    
+    // 忽略機器人自己的訊息 (避免迴圈)
+    if (msg.from.is_bot) return;
+
     bot.sendChatAction(chatId, 'typing');
 
     try {
@@ -113,24 +117,26 @@ bot.on('message', async (msg) => {
         let isRevision = false;
         let revisionInstruction = "";
 
+        // 情況 A: 修改指令 (Reply)
         if (msg.reply_to_message && msg.reply_to_message.from.id === bot.id) {
             console.log(`[Revision] 用戶要求修改文章`);
             inputData = msg.reply_to_message.text;
             isRevision = true;
             revisionInstruction = text;
         } 
+        // 情況 B: 網址 (啟動 Gate Room 摘要)
         else if (text && (text.startsWith('http') || text.startsWith('www'))) {
-            // 直接當作普通網頁處理
-            bot.sendMessage(chatId, "🌐 偵測到連結，正在爬取網頁...");
+            bot.sendMessage(chatId, "🌐 收到連結，正在閱讀網頁內容...");
             inputData = await getWebContent(text);
         }
-        }
+        // 情況 C: 文件 (PDF/TXT)
         else if (msg.document) {
             const mime = msg.document.mime_type;
             if (mime === 'application/pdf' || mime === 'text/plain') {
                 bot.sendMessage(chatId, "📄 收到文件，正在解析內容...");
                 const fileLink = await bot.getFileLink(msg.document.file_id);
                 const response = await axios({ url: fileLink, method: 'GET', responseType: 'arraybuffer' });
+                
                 if (mime === 'application/pdf') {
                     const data = await pdf(response.data);
                     inputData = data.text;
@@ -141,11 +147,12 @@ bot.on('message', async (msg) => {
                 return bot.sendMessage(chatId, "⚠️ 目前僅支援 PDF 與 TXT 文件格式。");
             }
         }
+        // 情況 D: 純文字直接摘要
         else if (!isRevision) {
              inputData = text;
         }
 
-        if (!inputData) return bot.sendMessage(chatId, "❌ 無法提取內容。");
+        if (!inputData) return bot.sendMessage(chatId, "❌ 無法提取內容，請確認連結有效。");
 
         const responseText = await callGemini(inputData, isRevision, revisionInstruction);
         await bot.sendMessage(chatId, responseText);
@@ -160,23 +167,11 @@ bot.on('message', async (msg) => {
     }
 });
 
-// ==========================================
-// 🧪 GitHub Action 測試專用窗口 (Test Route)
-// ==========================================
-const services = require('./services'); // 確保有引用 services
-
-app.get('/test-trigger', (req, res) => {
-    // 1. Fire-and-Forget: 先立刻回應，避免 GitHub Timeout
-    res.send('🚀 測試指令已接收！正在背景執行「優惠 折價」搜尋任務...');
-
-    console.log("🧪 [Test] 收到測試請求，開始執行單一關鍵字流程...");
-
-    // 2. 在背景執行特定關鍵字 (不影響原本邏輯)
-    // 這裡指定關鍵字為 "優惠 折價"，用來觀察是否能抓到相關新聞或影片
-    services.startDailyRoutine(['優惠 折價'])
-        .then(() => console.log("✅ [Test] 測試任務執行完畢"))
-        .catch(err => console.error("❌ [Test] 測試任務失敗:", err));
+// --- RSS 測試窗口 (保留功能，但不自動排程) ---
+app.get('/rss-test', async (req, res) => {
+   res.send("RSS Test Route is active but needs services.js connected.");
 });
-// ==========================================
-app.get('/', (req, res) => { res.send('Info Commander is Running (Ver 1223_08 Gemini 3 - Auth Mode)'); });
+
+app.get('/', (req, res) => { res.send('Info Commander is Running (Stable Restore)'); });
+
 app.listen(port, () => { console.log(`Server is running on port ${port}`); });
