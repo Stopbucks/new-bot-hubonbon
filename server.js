@@ -212,7 +212,7 @@ app.get('/test-trigger', (req, res) => {
 
     // 2. 在背景執行特定關鍵字 (不影響原本邏輯)
     // 這裡指定關鍵字為 "優惠 折價"，用來觀察是否能抓到相關新聞或影片
-    services.startDailyRoutine(['優惠 折價'])
+    services.startDailyRoutine(['AI 人工智慧'])
         .then(() => console.log("✅ [Test] 測試任務執行完畢"))
         .catch(err => console.error("❌ [Test] 測試任務失敗:", err));
 });
